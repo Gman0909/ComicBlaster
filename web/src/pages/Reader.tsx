@@ -3,9 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { TransformWrapper, TransformComponent, useControls, useTransformEffect } from 'react-zoom-pan-pinch'
-import { ArrowLeft, ChevronLeft, ChevronRight, Image, Tag, Bookmark } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Image, Tag, Bookmark, Maximize, Minimize } from 'lucide-react'
 import { api } from '../api'
 import SetThumbnailModal from '../components/SetThumbnailModal'
+import { FullPageSpinner } from '../components/Spinner'
+import { useFullscreen } from '../hooks/useFullscreen'
 
 // Resets the zoom/pan transform whenever the page changes — instead of
 // remounting the entire TransformWrapper (which throws away the canvas /
@@ -253,6 +255,7 @@ export default function Reader() {
   }, [enqueueSave, navigate])
 
   const [thumbnailOpen, setThumbnailOpen] = useState(false)
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
 
   const goTo = useCallback((n: number) => {
     setPage((prev) => {
@@ -310,11 +313,7 @@ export default function Reader() {
     }
   }
 
-  if (!comic) return (
-    <div className="min-h-dvh bg-black flex items-center justify-center text-white/30 text-sm">
-      Loading…
-    </div>
-  )
+  if (!comic) return <FullPageSpinner />
 
   return (
     <div className="min-h-dvh bg-black flex flex-col select-none overflow-hidden">
@@ -413,6 +412,14 @@ export default function Reader() {
               className={`p-2.5 -m-1.5 rounded-full transition-colors pointer-events-auto ${comic.custom_cover ? 'text-[var(--color-accent)]' : 'text-white/60 hover:text-white'} hover:bg-white/10`}
             >
               <Image size={16} />
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              className="p-2.5 -m-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors pointer-events-auto"
+            >
+              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
             </button>
           </motion.div>
         )}

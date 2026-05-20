@@ -2,6 +2,7 @@ import { lazy, Suspense, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { api, type Comic, type ComicsPage } from '../api'
+import Spinner from './Spinner'
 
 const PDFPage = lazy(() => import('./PDFPage'))
 
@@ -105,7 +106,7 @@ export default function SetThumbnailModal({ comic, initialPage = 1, onClose }: P
           style={{ aspectRatio: '2/3' }}
         >
           {isPdf ? (
-            <Suspense fallback={<span className="text-white/30 text-xs">Loading…</span>}>
+            <Suspense fallback={<Spinner size={28} className="text-white/60" />}>
               <PDFPage
                 ref={pdfCanvasRef}
                 url={api.fileUrl(comic.id)}

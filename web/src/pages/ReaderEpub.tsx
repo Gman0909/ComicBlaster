@@ -2,9 +2,11 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ChevronLeft, ChevronRight, Tag, Bookmark, Type, Sun, Moon } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Tag, Bookmark, Type, Sun, Moon, Maximize, Minimize } from 'lucide-react'
 import ePub, { type Book, type Rendition, type Location } from 'epubjs'
 import { api } from '../api'
+import { FullPageSpinner } from '../components/Spinner'
+import { useFullscreen } from '../hooks/useFullscreen'
 
 type Theme = 'light' | 'dark' | 'sepia'
 
@@ -54,6 +56,7 @@ export default function ReaderEpub() {
   const [labelsOpen, setLabelsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const labelIDs = new Set((comic?.labels ?? []).map((l) => l.id))
@@ -202,11 +205,7 @@ export default function ReaderEpub() {
     queryClient.invalidateQueries({ queryKey: ['collections'] })
   }
 
-  if (!comic) return (
-    <div className="min-h-dvh bg-black flex items-center justify-center text-white/30 text-sm">
-      Loading…
-    </div>
-  )
+  if (!comic) return <FullPageSpinner />
 
   const isDark = theme === 'dark'
   const overlayBg = isDark ? 'from-black/80' : 'from-white/90'
@@ -319,6 +318,16 @@ export default function ReaderEpub() {
                 </>
               )}
             </div>
+
+            {/* Fullscreen */}
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              className={`p-2.5 -m-1.5 rounded-full transition-opacity pointer-events-auto ${overlayText} opacity-60 hover:opacity-100 hover:bg-white/10`}
+            >
+              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

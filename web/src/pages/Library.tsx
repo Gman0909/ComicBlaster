@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'framer-motion'
-import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon } from 'lucide-react'
+import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize } from 'lucide-react'
 import { api, type Comic, type Collection, type User } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
+import { useFullscreen } from '../hooks/useFullscreen'
 import SetThumbnailModal from '../components/SetThumbnailModal'
 import RemoveComicModal from '../components/RemoveComicModal'
 import BulkActionBar from '../components/BulkActionBar'
@@ -140,12 +141,14 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
   )
 }
 
-function ProfileMenu({ user, theme, scanning, onScan, onToggleTheme, onSettings, onSignOut }: {
+function ProfileMenu({ user, theme, scanning, isFullscreen, onScan, onToggleTheme, onToggleFullscreen, onSettings, onSignOut }: {
   user: User | null
   theme: 'dark' | 'light'
   scanning: boolean
+  isFullscreen: boolean
   onScan: () => void
   onToggleTheme: () => void
+  onToggleFullscreen: () => void
   onSettings: () => void
   onSignOut: () => void
 }) {
@@ -196,6 +199,11 @@ function ProfileMenu({ user, theme, scanning, onScan, onToggleTheme, onSettings,
               icon={theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
               label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
               onClick={() => { onToggleTheme(); close() }}
+            />
+            <MenuItem
+              icon={isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+              label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              onClick={() => { onToggleFullscreen(); close() }}
             />
             <MenuItem
               icon={<Settings size={15} />}
@@ -317,6 +325,7 @@ export default function Library() {
   const { status: scanStatus, trigger: triggerScan } = useScan(
     () => queryClient.invalidateQueries({ queryKey: ['comics'] })
   )
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
   const view = libraryView
   const setView = setLibraryView
   const [search, setSearch] = useState('')
@@ -591,8 +600,10 @@ export default function Library() {
             user={user}
             theme={theme}
             scanning={scanStatus?.running ?? false}
+            isFullscreen={isFullscreen}
             onScan={triggerScan}
             onToggleTheme={toggleTheme}
+            onToggleFullscreen={toggleFullscreen}
             onSettings={() => navigate('/settings')}
             onSignOut={handleLogout}
           />

@@ -55,19 +55,36 @@ export interface ComicsPage {
   per_page: number
 }
 
+// Default JSON request timeout. Without it, a hung server / dropped Wi-Fi
+// would leave fetch() pending forever and React Query would never fall back
+// to its error state — that's the underlying cause of "stuck on Loading".
+const DEFAULT_TIMEOUT_MS = 15_000
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw Object.assign(new Error(err.error ?? res.statusText), { status: res.status })
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS)
+  try {
+    const res = await fetch(path, {
+      method,
+      credentials: 'include',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw Object.assign(new Error(err.error ?? res.statusText), { status: res.status })
+    }
+    if (res.status === 204) return undefined as T
+    return await res.json()
+  } catch (e) {
+    if ((e as any)?.name === 'AbortError') {
+      throw new Error('Request timed out')
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
   }
-  if (res.status === 204) return undefined as T
-  return res.json()
 }
 
 export const api = {

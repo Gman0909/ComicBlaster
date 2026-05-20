@@ -7,6 +7,7 @@ import Login from './pages/Login'
 import Library from './pages/Library'
 import Reader from './pages/Reader'
 import Settings from './pages/Settings'
+import { FullPageSpinner } from './components/Spinner'
 
 const ReaderEpub = lazy(() => import('./pages/ReaderEpub'))
 
@@ -27,17 +28,41 @@ function ThemeSync() {
 function ReaderDispatch() {
   const { id } = useParams<{ id: string }>()
   const comicId = Number(id)
-  const { data: comic } = useQuery({
+  const { data: comic, isError, error, refetch } = useQuery({
     queryKey: ['comic', comicId],
     queryFn: () => api.comic(comicId),
+    retry: 2,
+    retryDelay: 800,
   })
-  if (!comic) return (
-    <div className="min-h-dvh bg-black flex items-center justify-center text-white/30 text-sm">
-      Loading…
-    </div>
-  )
+  if (isError) {
+    return (
+      <div className="min-h-dvh w-full bg-black flex items-center justify-center px-6">
+        <div className="max-w-sm w-full text-center space-y-4">
+          <p className="text-white/90 text-base font-medium">Couldn't load this comic</p>
+          <p className="text-white/50 text-xs font-mono break-all">
+            {(error as Error)?.message ?? 'Unknown error'}
+          </p>
+          <div className="flex justify-center gap-2 pt-2">
+            <button
+              onClick={() => refetch()}
+              className="px-4 py-2 rounded-md bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => history.back()}
+              className="px-4 py-2 rounded-md border border-white/15 text-white/80 text-sm hover:bg-white/10 transition-colors"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  if (!comic) return <FullPageSpinner />
   if (comic.format === 'epub') return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<FullPageSpinner label="Preparing reader" />}>
       <ReaderEpub />
     </Suspense>
   )

@@ -1,0 +1,32 @@
+# Build artifacts
+/server/comicblaster
+/server/comicblaster.exe
+/server/comicblaster_*
+/server/comicblaster-*
+
+# Web client build output
+/web/dist/
+
+# Local data — never commit user data
+/comicblaster-data/
+**/comicblaster-data/
+*.db
+*.db-shm
+*.db-wal
+*.db.backup-*
+secret.key
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+/web/node_modules/
+
+# Logs
+*.log

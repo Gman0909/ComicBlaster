@@ -1,0 +1,30 @@
+[Unit]
+Description=ComicBlaster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# install.sh fills in User/Group/WorkingDirectory/ExecStart/HOME so the
+# service runs as the installing user without hardcoded paths.
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/comicblaster
+Restart=on-failure
+RestartSec=5
+Environment=HOME=__HOME__
+
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=comicblaster
+
+NoNewPrivileges=true
+# ProtectSystem/ProtectHome are intentionally not set — comic collections can
+# live anywhere (local FS, NFS, SMB mounts) and path sandboxing would require
+# enumerating every collection root in advance.
+
+[Install]
+WantedBy=multi-user.target

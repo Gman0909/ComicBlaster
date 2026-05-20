@@ -1,0 +1,815 @@
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { motion } from 'framer-motion'
+import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon } from 'lucide-react'
+import { api, type Comic, type Collection, type User } from '../api'
+import { useStore } from '../store'
+import { useScan } from '../hooks/useScan'
+import SetThumbnailModal from '../components/SetThumbnailModal'
+import RemoveComicModal from '../components/RemoveComicModal'
+import BulkActionBar from '../components/BulkActionBar'
+
+const CARD_ASPECT = 1.54 // typical comic cover ratio (taller than wide)
+
+function useColumns() {
+  const [cols, setCols] = useState(4)
+  const ref = useRef<HTMLDivElement>(null)
+  const obs = useRef<ResizeObserver | undefined>(undefined)
+
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    obs.current?.disconnect()
+    if (!el) return
+    obs.current = new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width
+      setCols(w < 480 ? 2 : w < 768 ? 3 : w < 1100 ? 4 : w < 1400 ? 5 : 6)
+    })
+    obs.current.observe(el)
+    ref.current = el
+  }, [])
+
+  return { cols, ref: measure }
+}
+
+function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, selected }: {
+  comic: Comic
+  onClick: (e: React.MouseEvent) => void
+  onSetThumbnail: () => void
+  onRemove: () => void
+  canRemove: boolean
+  selected: boolean
+}) {
+  const pct = comic.progress && comic.page_count > 0
+    ? Math.round((comic.progress.last_page / comic.page_count) * 100)
+    : 0
+
+  return (
+    <motion.button
+      onClick={onClick}
+      className={`group relative flex flex-col text-left rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+        selected
+          ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
+          : 'hover:ring-2 hover:ring-[var(--color-accent)]'
+      }`}
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.15 }}
+    >
+      {/* Cover */}
+      <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
+        <img
+          src={comic.cover_url}
+          alt={comic.title}
+          loading="lazy"
+          className={`absolute inset-0 w-full h-full object-cover transition-all ${pct === 100 ? 'brightness-[0.65] saturate-50' : ''}`}
+          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
+        />
+        {/* Format badge for types without cover art */}
+        {comic.format === 'pdf' && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-[var(--color-text-muted)] text-xs font-bold tracking-widest uppercase opacity-40">PDF</span>
+          </div>
+        )}
+        {pct > 0 && pct < 100 && (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
+            <div className="h-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        {pct === 100 && !selected && (
+          <>
+            <div className="absolute top-2 right-2 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500 text-white shadow-lg ring-2 ring-emerald-500/30">
+              <Check size={18} strokeWidth={3} />
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 bg-emerald-500/85 text-white text-[11px] font-bold uppercase tracking-wider text-center py-1 shadow-md">
+              Read
+            </div>
+          </>
+        )}
+        {selected && (
+          <div className="absolute inset-0 bg-[var(--color-accent)]/25 flex items-start justify-end p-2 pointer-events-none">
+            <div className="w-6 h-6 rounded-full bg-[var(--color-accent)] text-white flex items-center justify-center text-sm font-bold shadow-lg">
+              ✓
+            </div>
+          </div>
+        )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onSetThumbnail() }}
+          title="Set thumbnail"
+          aria-label="Set thumbnail"
+          className="absolute top-2 left-2 p-2.5 rounded-md bg-black/60 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-90 hover:bg-black/80 transition-all"
+        >
+          <Image size={14} className={comic.custom_cover ? 'text-[var(--color-accent)]' : ''} />
+        </button>
+        {canRemove && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove() }}
+            title="Remove from library"
+            aria-label="Remove from library"
+            className="absolute top-2 right-2 p-2.5 rounded-md bg-black/60 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-90 hover:bg-red-600 transition-all"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* Meta */}
+      <div className="p-2 flex flex-col gap-0.5 min-w-0">
+        <p className="text-xs font-medium text-[var(--color-text)] truncate leading-tight">{comic.title}</p>
+        {comic.series && (
+          <p className="text-[11px] text-[var(--color-text-muted)] truncate">{comic.series}</p>
+        )}
+        {comic.labels.length > 0 && (
+          <div
+            className="flex gap-1 mt-1 flex-wrap"
+            title={comic.labels.map((l) => l.name).join(', ')}
+          >
+            {comic.labels.slice(0, 3).map((l) => (
+              <span
+                key={l.id}
+                className="inline-block w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: l.color }}
+              />
+            ))}
+            {comic.labels.length > 3 && (
+              <span className="text-[10px] text-[var(--color-text-muted)] leading-none">+{comic.labels.length - 3}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </motion.button>
+  )
+}
+
+function ProfileMenu({ user, theme, scanning, onScan, onToggleTheme, onSettings, onSignOut }: {
+  user: User | null
+  theme: 'dark' | 'light'
+  scanning: boolean
+  onScan: () => void
+  onToggleTheme: () => void
+  onSettings: () => void
+  onSignOut: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const close = () => setOpen(false)
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Profile menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`flex items-center gap-2 pl-1.5 pr-2 sm:pr-3 py-1.5 rounded-md transition-colors ${
+          open
+            ? 'bg-[var(--color-surface-overlay)] text-[var(--color-text)]'
+            : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+        }`}
+      >
+        <span className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--color-surface-overlay)] text-[var(--color-text)]">
+          <UserIcon size={14} />
+        </span>
+        {user && (
+          <span className="hidden sm:inline text-xs font-medium max-w-[8rem] truncate">{user.username}</span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={close} aria-hidden />
+          <div
+            role="menu"
+            className="absolute right-0 top-full mt-2 z-40 w-56 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] shadow-2xl overflow-hidden"
+          >
+            {user && (
+              <div className="px-3 py-2.5 border-b border-[var(--color-border)]">
+                <p className="text-sm font-medium text-[var(--color-text)] truncate">{user.username}</p>
+                {user.role === 'admin' && (
+                  <p className="text-[10px] text-[var(--color-accent)] uppercase tracking-wider font-medium mt-0.5">admin</p>
+                )}
+              </div>
+            )}
+            <MenuItem
+              icon={<ScanLine size={15} className={scanning ? 'animate-spin' : ''} />}
+              label={scanning ? 'Scanning…' : 'Rescan library'}
+              disabled={scanning}
+              onClick={() => { onScan(); close() }}
+            />
+            <MenuItem
+              icon={theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+              onClick={() => { onToggleTheme(); close() }}
+            />
+            <MenuItem
+              icon={<Settings size={15} />}
+              label="Settings"
+              onClick={() => { onSettings(); close() }}
+            />
+            <div className="border-t border-[var(--color-border)]" />
+            <MenuItem
+              icon={<LogOut size={15} />}
+              label="Sign out"
+              danger
+              onClick={() => { onSignOut(); close() }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function MenuItem({ icon, label, onClick, danger, disabled }: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  danger?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+        danger
+          ? 'text-[var(--color-text-muted)] hover:text-red-400 hover:bg-red-500/10'
+          : 'text-[var(--color-text)] hover:bg-[var(--color-surface-overlay)]'
+      }`}
+    >
+      <span className="w-5 flex items-center justify-center text-[var(--color-text-muted)]">{icon}</span>
+      <span className="flex-1 text-left">{label}</span>
+    </button>
+  )
+}
+
+function CollectionCard({ collection, onClick, unreadOnly, selected }: {
+  collection: Collection
+  onClick: (e: React.MouseEvent) => void
+  unreadOnly: boolean
+  selected: boolean
+}) {
+  const previews = (collection.preview_ids ?? []).slice(0, 4)
+  const total = collection.comic_count ?? 0
+  const unread = collection.unread_count ?? 0
+  return (
+    <motion.button
+      onClick={onClick}
+      className={`group relative flex flex-col text-left rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+        selected
+          ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
+          : 'hover:ring-2 hover:ring-[var(--color-accent)]'
+      }`}
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.15 }}
+    >
+      <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
+        {previews.length === 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center text-[var(--color-text-muted)] opacity-50">
+            <Bookmark size={32} />
+          </div>
+        ) : previews.length === 1 ? (
+          <img
+            src={`/api/comics/${previews[0]}/cover`}
+            alt=""
+            loading="lazy"
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
+          />
+        ) : (
+          <div className={`absolute inset-0 grid gap-0.5 ${previews.length === 2 ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'}`}>
+            {previews.map((id) => (
+              <img
+                key={id}
+                src={`/api/comics/${id}/cover`}
+                alt=""
+                loading="lazy"
+                className="w-full h-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
+              />
+            ))}
+          </div>
+        )}
+        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+          <div className="flex items-end justify-between gap-2">
+            <p className="text-sm font-medium text-white truncate flex-1">{collection.name}</p>
+            {unreadOnly ? (
+              <span className="text-xs text-[var(--color-accent)] tabular-nums shrink-0 font-medium">{unread} new</span>
+            ) : (
+              <span className="text-xs text-white/70 tabular-nums shrink-0">{total}</span>
+            )}
+          </div>
+        </div>
+        {selected && (
+          <div className="absolute inset-0 bg-[var(--color-accent)]/25 flex items-start justify-end p-2 pointer-events-none">
+            <div className="w-6 h-6 rounded-full bg-[var(--color-accent)] text-white flex items-center justify-center text-sm font-bold shadow-lg">
+              ✓
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.button>
+  )
+}
+
+export default function Library() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { setUser, theme, toggleTheme, user, libraryView, setLibraryView, unreadOnly, setUnreadOnly } = useStore()
+  const isAdmin = user?.role === 'admin'
+  const { status: scanStatus, trigger: triggerScan } = useScan(
+    () => queryClient.invalidateQueries({ queryKey: ['comics'] })
+  )
+  const view = libraryView
+  const setView = setLibraryView
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState('series')
+  const [order, setOrder] = useState<'asc' | 'desc'>('asc')
+  const [labelFilter, setLabelFilter] = useState<number | null>(null)
+  const [collectionFilter, setCollectionFilter] = useState<number | null>(null)
+  const [thumbnailComic, setThumbnailComic] = useState<Comic | null>(null)
+  const [removeComic, setRemoveComic] = useState<Comic | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<Set<number>>(() => new Set())
+  const [selectMode, setSelectMode] = useState(false)
+  const anchorRef = useRef<number | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { cols, ref: containerRef } = useColumns()
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['comics', search, sort, order, labelFilter, collectionFilter, unreadOnly],
+    queryFn: () => api.comics({
+      search,
+      sort,
+      order,
+      per_page: 500,
+      ...(labelFilter ? { label_id: labelFilter } : {}),
+      ...(collectionFilter ? { collection_id: collectionFilter } : {}),
+      ...(unreadOnly ? { unread: 1 } : {}),
+    }),
+    staleTime: 0,
+  })
+
+  const { data: labels = [] } = useQuery({
+    queryKey: ['labels'],
+    queryFn: () => api.labels(),
+  })
+
+  const { data: collections = [] } = useQuery({
+    queryKey: ['collections'],
+    queryFn: () => api.collections(),
+  })
+
+  const inCollection = collectionFilter
+    ? collections.find((c) => c.id === collectionFilter)
+    : null
+
+  const [chipQuery, setChipQuery] = useState('')
+  const totalChips = labels.length + collections.length
+  const chipQueryLower = chipQuery.trim().toLowerCase()
+  const visibleLabels = chipQueryLower
+    ? labels.filter((l) => l.name.toLowerCase().includes(chipQueryLower))
+    : labels
+  const visibleCollections = chipQueryLower
+    ? collections.filter((c) => c.name.toLowerCase().includes(chipQueryLower))
+    : collections
+
+  const comics = data?.comics ?? []
+  const rowCount = Math.ceil(comics.length / cols)
+
+  // Click on a card: modifier-aware multi-select. Without a modifier, opens the
+  // comic unless a selection is already active (then it toggles, like Finder).
+  const handleCardClick = useCallback((comic: Comic, e: React.MouseEvent) => {
+    const meta = e.metaKey || e.ctrlKey
+    const shift = e.shiftKey
+    if (meta) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(comic.id)) next.delete(comic.id)
+        else next.add(comic.id)
+        return next
+      })
+      anchorRef.current = comic.id
+      return
+    }
+    if (shift && anchorRef.current !== null) {
+      const start = comics.findIndex((c) => c.id === anchorRef.current)
+      const end = comics.findIndex((c) => c.id === comic.id)
+      if (start === -1 || end === -1) return
+      const [lo, hi] = start < end ? [start, end] : [end, start]
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        for (let i = lo; i <= hi; i++) next.add(comics[i].id)
+        return next
+      })
+      return
+    }
+    if (selectedIds.size > 0 || selectMode) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(comic.id)) next.delete(comic.id)
+        else next.add(comic.id)
+        return next
+      })
+      anchorRef.current = comic.id
+      return
+    }
+    anchorRef.current = comic.id
+    navigate(`/read/${comic.id}`)
+  }, [comics, selectedIds.size, selectMode, navigate])
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set())
+    setSelectedCollectionIds(new Set())
+    setSelectMode(false)
+  }, [])
+
+  // Switching views shouldn't carry selection from one mode into the other.
+  useEffect(() => {
+    setSelectedIds(new Set())
+    setSelectedCollectionIds(new Set())
+  }, [view])
+
+  const handleCollectionCardClick = useCallback((c: Collection, e: React.MouseEvent) => {
+    const meta = e.metaKey || e.ctrlKey
+    const shift = e.shiftKey
+    if (meta) {
+      setSelectedCollectionIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(c.id)) next.delete(c.id)
+        else next.add(c.id)
+        return next
+      })
+      anchorRef.current = c.id
+      return
+    }
+    if (shift && anchorRef.current !== null) {
+      const start = collections.findIndex((cc) => cc.id === anchorRef.current)
+      const end = collections.findIndex((cc) => cc.id === c.id)
+      if (start === -1 || end === -1) return
+      const [lo, hi] = start < end ? [start, end] : [end, start]
+      setSelectedCollectionIds((prev) => {
+        const next = new Set(prev)
+        for (let i = lo; i <= hi; i++) next.add(collections[i].id)
+        return next
+      })
+      return
+    }
+    if (selectedCollectionIds.size > 0 || selectMode) {
+      setSelectedCollectionIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(c.id)) next.delete(c.id)
+        else next.add(c.id)
+        return next
+      })
+      anchorRef.current = c.id
+      return
+    }
+    // Drill into the collection
+    anchorRef.current = c.id
+    setCollectionFilter(c.id)
+    setLabelFilter(null)
+    setView('library')
+  }, [collections, selectMode, selectedCollectionIds.size, setView])
+
+  // Escape clears selection and exits selection mode
+  useEffect(() => {
+    if (selectedIds.size === 0 && selectedCollectionIds.size === 0 && !selectMode) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') clearSelection()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedIds.size, selectedCollectionIds.size, selectMode, clearSelection])
+
+  // 'position' sort only makes sense inside a collection — snap back when leaving
+  useEffect(() => {
+    if (!inCollection && sort === 'position') setSort('series')
+  }, [inCollection, sort])
+
+  const selectedComics = comics.filter((c) => selectedIds.has(c.id))
+  const selectedCollections = collections.filter((c) => selectedCollectionIds.has(c.id))
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 280,
+    overscan: 3,
+  })
+
+  async function handleLogout() {
+    await api.logout().catch(() => {})
+    setUser(null)
+    navigate('/login')
+  }
+
+  return (
+    <div className="flex flex-col h-dvh bg-[var(--color-surface)]">
+      {/* Topbar */}
+      <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] shrink-0">
+        <h1 className="hidden sm:block text-base font-bold tracking-tight mr-2">
+          Comic<span className="text-[var(--color-accent)]">Blaster</span>
+        </h1>
+
+        {/* Search */}
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-full bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-md pl-8 pr-3 py-1.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors"
+          />
+        </div>
+
+        {/* Sort — hidden in collections view */}
+        <div className={`flex items-center gap-0 shrink-0 ${view === 'collections' ? 'hidden' : ''}`}>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            aria-label="Sort by"
+            className="bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-l-md border-r-0 px-2 py-1.5 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] transition-colors"
+          >
+            {inCollection && <option value="position">Collection order</option>}
+            <option value="series">Series</option>
+            <option value="title">Title</option>
+            <option value="date_added">Date added</option>
+            <option value="last_read">Last read</option>
+          </select>
+          <button
+            onClick={() => setOrder(o => o === 'asc' ? 'desc' : 'asc')}
+            disabled={sort === 'position'}
+            title={sort === 'position' ? 'Collection order is fixed' : (order === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending')}
+            aria-label={`Sort ${order === 'asc' ? 'ascending' : 'descending'}`}
+            className="bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-r-md px-2 py-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {order === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1 ml-auto">
+          <button
+            onClick={() => setUnreadOnly(!unreadOnly)}
+            title={unreadOnly ? 'Showing only unread — click to show all' : 'Show only unread'}
+            aria-label="Toggle unread filter"
+            aria-pressed={unreadOnly}
+            className={`p-2.5 rounded-md transition-colors ${
+              unreadOnly
+                ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            {unreadOnly ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+          <button
+            onClick={() => setView(view === 'library' ? 'collections' : 'library')}
+            title={view === 'library' ? 'View collections' : 'View all comics'}
+            aria-label={view === 'library' ? 'View collections' : 'View all comics'}
+            aria-pressed={view === 'collections'}
+            className={`p-2.5 rounded-md transition-colors ${
+              view === 'collections'
+                ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            {view === 'library' ? <LayoutGrid size={16} /> : <LibraryIcon size={16} />}
+          </button>
+          <button
+            onClick={() => {
+              if (selectMode || selectedIds.size > 0 || selectedCollectionIds.size > 0) clearSelection()
+              else setSelectMode(true)
+            }}
+            title={selectMode || selectedIds.size > 0 || selectedCollectionIds.size > 0 ? 'Exit selection' : 'Select multiple'}
+            aria-label="Select multiple"
+            aria-pressed={selectMode || selectedIds.size > 0 || selectedCollectionIds.size > 0}
+            className={`p-2.5 rounded-md transition-colors ${
+              selectMode || selectedIds.size > 0 || selectedCollectionIds.size > 0
+                ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            <CheckSquare size={16} />
+          </button>
+          <ProfileMenu
+            user={user}
+            theme={theme}
+            scanning={scanStatus?.running ?? false}
+            onScan={triggerScan}
+            onToggleTheme={toggleTheme}
+            onSettings={() => navigate('/settings')}
+            onSignOut={handleLogout}
+          />
+        </div>
+      </header>
+
+      {/* Filter strip: labels + collections */}
+      {view === 'library' && (labels.length > 0 || collections.length > 0) && (
+        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+          <div className="relative">
+            {/* edge fade so users see there's more to scroll */}
+            <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-[var(--color-surface-raised)] to-transparent z-10" />
+            <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-[var(--color-surface-raised)] to-transparent z-10" />
+            <div className="px-4 py-2 flex gap-2 overflow-x-auto items-center">
+              <button
+                onClick={() => { setLabelFilter(null); setCollectionFilter(null) }}
+                className={`shrink-0 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                  labelFilter === null && collectionFilter === null
+                    ? 'bg-[var(--color-accent)] text-white'
+                    : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                }`}
+              >
+                All
+              </button>
+              {totalChips >= 8 && (
+                <input
+                  type="search"
+                  value={chipQuery}
+                  onChange={(e) => setChipQuery(e.target.value)}
+                  placeholder="Filter…"
+                  aria-label="Filter labels and collections"
+                  className="shrink-0 w-24 sm:w-32 bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-full px-2.5 py-1 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors"
+                />
+              )}
+              {visibleLabels.map((l) => (
+                <button
+                  key={`l-${l.id}`}
+                  onClick={() => {
+                    setCollectionFilter(null)
+                    setLabelFilter(labelFilter === l.id ? null : l.id)
+                  }}
+                  className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                    labelFilter === l.id
+                      ? 'text-white'
+                      : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                  }`}
+                  style={labelFilter === l.id ? { backgroundColor: l.color } : undefined}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: l.color }}
+                  />
+                  {l.name}
+                </button>
+              ))}
+              {visibleLabels.length > 0 && visibleCollections.length > 0 && (
+                <span className="shrink-0 h-5 w-px bg-[var(--color-border)]" aria-hidden />
+              )}
+              {visibleCollections.map((c) => (
+                <button
+                  key={`c-${c.id}`}
+                  onClick={() => {
+                    setLabelFilter(null)
+                    setCollectionFilter(collectionFilter === c.id ? null : c.id)
+                  }}
+                  className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                    collectionFilter === c.id
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                  }`}
+                >
+                  <Bookmark size={10} className="shrink-0" />
+                  {c.name}
+                  <span className="opacity-60 tabular-nums">{c.comic_count ?? 0}</span>
+                </button>
+              ))}
+              {chipQuery && visibleLabels.length === 0 && visibleCollections.length === 0 && (
+                <span className="shrink-0 text-xs text-[var(--color-text-muted)] italic px-2">no matches</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scan progress bar */}
+      {scanStatus?.running && (
+        <div className="shrink-0 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] space-y-1.5">
+          <div className="flex justify-between text-xs text-[var(--color-text-muted)]">
+            <span className="truncate">{scanStatus.current || '…'}</span>
+            <span className="tabular-nums shrink-0 ml-4">{scanStatus.processed} files</span>
+          </div>
+          <div className="h-0.5 rounded-full bg-[var(--color-surface-overlay)] overflow-hidden">
+            <div className="h-full bg-[var(--color-accent)] animate-[scan-progress_1.5s_ease-in-out_infinite]" style={{ width: '40%' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Grid */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div ref={containerRef} className="px-4 py-4">
+          {view === 'collections' && (
+            <>
+              {collections.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64 gap-2 text-[var(--color-text-muted)]">
+                  <p className="text-sm">No collections yet. Create some in Settings.</p>
+                </div>
+              ) : (
+                (() => {
+                  const visible = unreadOnly
+                    ? collections.filter((c) => (c.unread_count ?? 0) > 0)
+                    : collections
+                  if (visible.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-[var(--color-text-muted)]">
+                        <p className="text-sm">No unread collections.</p>
+                      </div>
+                    )
+                  }
+                  return (
+                    <div
+                      className="grid gap-3 pb-3"
+                      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                    >
+                      {visible.map((c) => (
+                        <CollectionCard
+                          key={c.id}
+                          collection={c}
+                          unreadOnly={unreadOnly}
+                          selected={selectedCollectionIds.has(c.id)}
+                          onClick={(e) => handleCollectionCardClick(c, e)}
+                        />
+                      ))}
+                    </div>
+                  )
+                })()
+              )}
+            </>
+          )}
+          {view === 'library' && isLoading && (
+            <div className="flex items-center justify-center h-64 text-[var(--color-text-muted)] text-sm">
+              Loading library…
+            </div>
+          )}
+          {view === 'library' && !isLoading && comics.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-64 gap-2 text-[var(--color-text-muted)]">
+              <p className="text-sm">{search ? 'No results' : 'No comics found. Add paths in config.yaml and rescan.'}</p>
+            </div>
+          )}
+          {view === 'library' && comics.length > 0 && (
+            <div
+              style={{ height: virtualizer.getTotalSize(), position: 'relative' }}
+            >
+              {virtualizer.getVirtualItems().map((vRow) => {
+                const rowComics = comics.slice(vRow.index * cols, vRow.index * cols + cols)
+                return (
+                  <div
+                    key={vRow.key}
+                    data-index={vRow.index}
+                    ref={virtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vRow.start}px)` }}
+                  >
+                    <div
+                      className="grid gap-3 pb-3"
+                      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+                    >
+                      {rowComics.map((comic) => (
+                        <ComicCard
+                          key={comic.id}
+                          comic={comic}
+                          onClick={(e) => handleCardClick(comic, e)}
+                          onSetThumbnail={() => setThumbnailComic(comic)}
+                          onRemove={() => setRemoveComic(comic)}
+                          canRemove={isAdmin}
+                          selected={selectedIds.has(comic.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Status bar */}
+      {view === 'library' && comics.length > 0 && (
+        <div className="px-4 py-1.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
+          {comics.length} comic{comics.length !== 1 ? 's' : ''}
+        </div>
+      )}
+      {view === 'collections' && collections.length > 0 && (
+        <div className="px-4 py-1.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
+          {collections.length} collection{collections.length !== 1 ? 's' : ''}
+        </div>
+      )}
+
+      {thumbnailComic && (
+        <SetThumbnailModal
+          comic={thumbnailComic}
+          onClose={() => setThumbnailComic(null)}
+        />
+      )}
+      {removeComic && (
+        <RemoveComicModal
+          comic={removeComic}
+          onClose={() => setRemoveComic(null)}
+        />
+      )}
+      {(selectedIds.size > 0 || selectedCollectionIds.size > 0 || selectMode) && (
+        <BulkActionBar
+          selected={selectedComics}
+          selectedCollections={selectedCollections}
+          canHide={isAdmin}
+          onClear={clearSelection}
+        />
+      )}
+    </div>
+  )
+}

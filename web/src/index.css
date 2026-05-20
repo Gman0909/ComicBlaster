@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface:         oklch(0.13 0 0);
+  --color-surface-raised:  oklch(0.18 0 0);
+  --color-surface-overlay: oklch(0.23 0 0);
+  --color-border:          oklch(0.28 0 0);
+  --color-text:            oklch(0.95 0 0);
+  --color-text-muted:      oklch(0.55 0 0);
+  --color-accent:          oklch(0.65 0.2 265);
+  --color-accent-hover:    oklch(0.72 0.2 265);
+}
+
+:root { color-scheme: dark; }
+
+[data-theme="light"] {
+  color-scheme: light;
+  --color-surface:         oklch(0.97 0 0);
+  --color-surface-raised:  oklch(0.93 0 0);
+  --color-surface-overlay: oklch(0.88 0 0);
+  --color-border:          oklch(0.80 0 0);
+  --color-text:            oklch(0.15 0 0);
+  --color-text-muted:      oklch(0.45 0 0);
+  --color-accent:          oklch(0.50 0.2 265);
+  --color-accent-hover:    oklch(0.44 0.2 265);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  /* iOS Safari can introduce phantom horizontal scroll if any descendant
+     uses 100vw or fixed widths slightly larger than the available area. */
+  overflow-x: hidden;
+}
+body {
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root { min-height: 100dvh; display: flex; flex-direction: column; }
+
+/* iOS safe-area utilities: bake the base padding + env() inset into one rule
+   so they don't fight Tailwind's pb-N (last-defined wins). Use these instead
+   of pb-3/pb-4 on elements that sit against the bottom/sides of the viewport. */
+.pb-safe-3 { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)); }
+.pb-safe-4 { padding-bottom: calc(1rem    + env(safe-area-inset-bottom, 0px)); }
+.px-safe-3 {
+  padding-left:  calc(0.75rem + env(safe-area-inset-left,  0px));
+  padding-right: calc(0.75rem + env(safe-area-inset-right, 0px));
+}
+.px-safe-4 {
+  padding-left:  calc(1rem    + env(safe-area-inset-left,  0px));
+  padding-right: calc(1rem    + env(safe-area-inset-right, 0px));
+}
+
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+@keyframes scan-progress {
+  0%   { transform: translateX(-100%); width: 40%; }
+  50%  { width: 60%; }
+  100% { transform: translateX(350%); width: 40%; }
+}

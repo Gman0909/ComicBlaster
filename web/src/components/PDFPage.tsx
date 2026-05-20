@@ -13,6 +13,15 @@ async function loadDoc(url: string): Promise<pdfjsLib.PDFDocumentProxy> {
   return doc
 }
 
+// pdf.js exposes RenderingCancelledException — but the public types don't
+// always export it cleanly, so detect by name. Cancellation is the normal
+// outcome when a fresh render starts before the previous one finished and
+// must not show up as a user-facing error.
+function isCancellation(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name
+  return name === 'RenderingCancelledException' || name === 'AbortException'
+}
+
 interface Props {
   url: string
   page: number // 1-indexed
@@ -29,6 +38,10 @@ const PDFPage = forwardRef<HTMLCanvasElement, Props>(function PDFPage(
 ) {
   const internalRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState(false)
+  // Hold the in-flight render task so a rapid re-render (page change, prop
+  // change, mount/unmount race) can cancel it before kicking off a new one.
+  // pdf.js otherwise complains about overlapping renders on the same canvas.
+  const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null)
 
   // Keep external ref in sync with internal ref
   useEffect(() => {
@@ -40,12 +53,19 @@ const PDFPage = forwardRef<HTMLCanvasElement, Props>(function PDFPage(
 
   useEffect(() => {
     let cancelled = false
-    setError(false)
     onRendered?.(false)
 
     async function render() {
       const canvas = internalRef.current
       if (!canvas) return
+      // Cancel any in-flight render on the same canvas first. The await on
+      // the previous task's promise will reject with RenderingCancelled —
+      // that error path is handled in the previous effect run's catch and
+      // ignored thanks to isCancellation().
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel() } catch {}
+        renderTaskRef.current = null
+      }
       try {
         const doc = await loadDoc(url)
         if (cancelled) return
@@ -66,15 +86,34 @@ const PDFPage = forwardRef<HTMLCanvasElement, Props>(function PDFPage(
         canvas.style.height = `${scaled.height / dpr}px`
 
         const ctx = canvas.getContext('2d')!
-        await pdfPage.render({ canvasContext: ctx, viewport: scaled, canvas }).promise
-        if (!cancelled) onRendered?.(true)
-      } catch {
-        if (!cancelled) setError(true)
+        const task = pdfPage.render({ canvasContext: ctx, viewport: scaled, canvas })
+        renderTaskRef.current = task
+        await task.promise
+        if (!cancelled) {
+          setError(false)
+          onRendered?.(true)
+        }
+      } catch (err) {
+        if (cancelled) return
+        if (isCancellation(err)) return // expected — a newer render took over
+        // Real failure (network, parse, etc.). Log so the user has something
+        // actionable in devtools, but don't leave them staring at an opaque
+        // overlay forever — the canvas content from the previous page (if
+        // any) stays visible underneath.
+        // eslint-disable-next-line no-console
+        console.warn('[PDFPage] render failed', err)
+        setError(true)
       }
     }
 
     render()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel() } catch {}
+        renderTaskRef.current = null
+      }
+    }
   }, [url, page, maxWidth, maxHeight])
 
   // After the current page is on screen, prime pdf.js's internal page cache
@@ -98,13 +137,20 @@ const PDFPage = forwardRef<HTMLCanvasElement, Props>(function PDFPage(
     }
   }, [url, page])
 
-  if (error) return (
-    <div className="flex items-center justify-center text-white/30 text-sm w-full h-full">
-      Could not render page
-    </div>
+  // Error is shown as a small overlay rather than replacing the canvas so
+  // a transient failure on one page doesn't blank out the whole reader.
+  return (
+    <>
+      <canvas ref={internalRef} className={className} />
+      {error && (
+        <div className="absolute inset-x-0 bottom-4 flex justify-center pointer-events-none">
+          <div className="px-3 py-1.5 rounded-md bg-red-600/90 text-white text-xs shadow-lg pointer-events-auto">
+            Couldn't render this page
+          </div>
+        </div>
+      )}
+    </>
   )
-
-  return <canvas ref={internalRef} className={className} />
 })
 
 export default PDFPage

@@ -325,16 +325,16 @@ func (d *DB) GetComicByID(id int64) (*Comic, error) {
 }
 
 type ListComicsParams struct {
-	UserID       int64
-	Search       string
-	Sort         string // title | series | date_added | last_read
-	Order        string // asc | desc
-	Format       string
-	LabelID      int64 // 0 = no filter
-	CollectionID int64 // 0 = no filter; when set, comics are ordered by collection position
-	UnreadOnly   bool  // hide comics where last_page >= page_count
-	Page         int
-	PerPage      int
+	UserID        int64
+	Search        string
+	Sort          string  // title | series | date_added | last_read | position
+	Order         string  // asc | desc
+	Format        string
+	LabelIDs      []int64 // empty = no filter; multiple = comic must have ALL of these
+	CollectionIDs []int64 // empty = no filter; multiple = comic must be in ALL of these
+	UnreadOnly    bool    // hide comics where last_page >= page_count
+	Page          int
+	PerPage       int
 }
 
 func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
@@ -375,29 +375,39 @@ func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
 		// not-yet-read.
 		where += ` AND (rp.last_page IS NULL OR c.page_count = 0 OR rp.last_page < c.page_count)`
 	}
-	if p.LabelID > 0 {
+	// Multi-label AND: every requested label must be attached to the comic.
+	for _, lid := range p.LabelIDs {
+		if lid <= 0 {
+			continue
+		}
 		where += ` AND c.id IN (
 			SELECT cl.comic_id FROM comic_labels cl
 			JOIN labels l ON l.id = cl.label_id
 			WHERE cl.label_id = ? AND l.user_id = ?
 		)`
-		args = append(args, p.LabelID, p.UserID)
+		args = append(args, lid, p.UserID)
 	}
-	if p.CollectionID > 0 {
+	// Multi-collection AND: the comic must live in every requested collection.
+	for _, cid := range p.CollectionIDs {
+		if cid <= 0 {
+			continue
+		}
 		where += ` AND c.id IN (
 			SELECT cc.comic_id FROM collection_comics cc
 			JOIN collections col ON col.id = cc.collection_id
 			WHERE cc.collection_id = ? AND col.user_id = ?
 		)`
-		args = append(args, p.CollectionID, p.UserID)
-		// Use the user-defined position order only when the caller explicitly
-		// requests it via sort=position. Other sort values stay user-controlled.
-		if p.Sort == "position" {
-			sortExpr = `(SELECT position FROM collection_comics
-			             WHERE collection_id = ` + strconv.FormatInt(p.CollectionID, 10) +
-				` AND comic_id = c.id)`
-			order = "ASC"
-		}
+		args = append(args, cid, p.UserID)
+	}
+	// sort=position is only meaningful for a single collection; pick the
+	// first one when multiple are selected (defensive — the client only ever
+	// sets this when exactly one collection is active).
+	if p.Sort == "position" && len(p.CollectionIDs) > 0 {
+		firstColl := p.CollectionIDs[0]
+		sortExpr = `(SELECT position FROM collection_comics
+		             WHERE collection_id = ` + strconv.FormatInt(firstColl, 10) +
+			` AND comic_id = c.id)`
+		order = "ASC"
 	}
 
 	base := `FROM comics c LEFT JOIN reading_progress rp ON rp.comic_id = c.id AND rp.user_id = ? ` + where

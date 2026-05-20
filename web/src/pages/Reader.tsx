@@ -199,9 +199,10 @@ export default function Reader() {
     return q.runner
   }, [comicId])
 
-  // Page changes feed the queue. goBack awaits it.
+  // Page changes feed the queue — every change, including landing back on
+  // page 1, so the saved position always matches the user's current view.
   useEffect(() => {
-    if (!readyRef.current || page <= 1) return
+    if (!readyRef.current || page < 1) return
     enqueueSave(page)
   }, [page, enqueueSave])
 
@@ -239,6 +240,8 @@ export default function Reader() {
   // flight (server only accepts writes with a higher seq).
   useEffect(() => {
     const send = () => {
+      // Skip only if we never learned a page (PDF that never loaded a count
+      // would have pageRef.current=1 by default — still worth recording).
       if (pageRef.current < 1) return
       const body = JSON.stringify({
         last_page: pageRef.current,

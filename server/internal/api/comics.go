@@ -91,22 +91,24 @@ func (s *server) handleListComics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	labelID, _ := strconv.ParseInt(q.Get("label_id"), 10, 64)
-	collectionID, _ := strconv.ParseInt(q.Get("collection_id"), 10, 64)
+	// label_id / collection_id accept either a single value or a
+	// comma-separated list ("3,7,12") to AND-filter on multiple at once.
+	labelIDs := parseCSVInts(q.Get("label_id"))
+	collectionIDs := parseCSVInts(q.Get("collection_id"))
 	unread := q.Get("unread") == "1"
 	userID := getClaims(r).UserID
 
 	comics, total, err := s.db.ListComics(storage.ListComicsParams{
-		UserID:       userID,
-		Search:       q.Get("search"),
-		Sort:         q.Get("sort"),
-		Order:        q.Get("order"),
-		Format:       q.Get("format"),
-		LabelID:      labelID,
-		CollectionID: collectionID,
-		UnreadOnly:   unread,
-		Page:         page,
-		PerPage:      perPage,
+		UserID:        userID,
+		Search:        q.Get("search"),
+		Sort:          q.Get("sort"),
+		Order:         q.Get("order"),
+		Format:        q.Get("format"),
+		LabelIDs:      labelIDs,
+		CollectionIDs: collectionIDs,
+		UnreadOnly:    unread,
+		Page:          page,
+		PerPage:       perPage,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
@@ -183,6 +185,26 @@ func (s *server) handleGetCover(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	http.ServeFile(w, r, c.CoverPath)
+}
+
+// parseCSVInts splits "3,7,12" into [3,7,12] for multi-filter query params.
+// Empty input or unparseable elements yield an empty (or shorter) slice.
+func parseCSVInts(s string) []int64 {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if n, err := strconv.ParseInt(p, 10, 64); err == nil && n > 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Quantise the requested viewport width to a small set of buckets so the cache

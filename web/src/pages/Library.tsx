@@ -320,7 +320,13 @@ function CollectionCard({ collection, onClick, unreadOnly, selected }: {
 export default function Library() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { setUser, theme, toggleTheme, user, libraryView, setLibraryView, unreadOnly, setUnreadOnly } = useStore()
+  const {
+    setUser, theme, toggleTheme, user,
+    libraryView, setLibraryView,
+    unreadOnly, setUnreadOnly,
+    library, setLibrarySearch, setLibrarySort, setLibraryOrder,
+    toggleLabelFilter, toggleCollectionFilter, clearLibraryFilters, setLibraryScroll,
+  } = useStore()
   const isAdmin = user?.role === 'admin'
   const { status: scanStatus, trigger: triggerScan } = useScan(
     () => queryClient.invalidateQueries({ queryKey: ['comics'] })
@@ -328,11 +334,16 @@ export default function Library() {
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
   const view = libraryView
   const setView = setLibraryView
-  const [search, setSearch] = useState('')
-  const [sort, setSort] = useState('series')
-  const [order, setOrder] = useState<'asc' | 'desc'>('asc')
-  const [labelFilter, setLabelFilter] = useState<number | null>(null)
-  const [collectionFilter, setCollectionFilter] = useState<number | null>(null)
+  // Library UI state now lives in Zustand so opening a comic and coming
+  // back keeps search / sort / filters / scroll exactly as they were.
+  const search = library.search
+  const setSearch = setLibrarySearch
+  const sort = library.sort
+  const setSort = setLibrarySort
+  const order = library.order
+  const setOrder = setLibraryOrder
+  const labelFilters = library.labelFilters
+  const collectionFilters = library.collectionFilters
   const [thumbnailComic, setThumbnailComic] = useState<Comic | null>(null)
   const [removeComic, setRemoveComic] = useState<Comic | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
@@ -343,14 +354,14 @@ export default function Library() {
   const { cols, ref: containerRef } = useColumns()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['comics', search, sort, order, labelFilter, collectionFilter, unreadOnly],
+    queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly],
     queryFn: () => api.comics({
       search,
       sort,
       order,
       per_page: 500,
-      ...(labelFilter ? { label_id: labelFilter } : {}),
-      ...(collectionFilter ? { collection_id: collectionFilter } : {}),
+      ...(labelFilters.length      ? { label_id:      labelFilters.join(',') } : {}),
+      ...(collectionFilters.length ? { collection_id: collectionFilters.join(',') } : {}),
       ...(unreadOnly ? { unread: 1 } : {}),
     }),
     staleTime: 0,
@@ -366,8 +377,12 @@ export default function Library() {
     queryFn: () => api.collections(),
   })
 
-  const inCollection = collectionFilter
-    ? collections.find((c) => c.id === collectionFilter)
+  // "Inside a collection" UX (sort=position option, etc.) only makes sense
+  // when exactly one collection is selected. With multiple, sort=position
+  // is ambiguous and we fall back to normal sort options.
+  const singleCollectionId = collectionFilters.length === 1 ? collectionFilters[0] : null
+  const inCollection = singleCollectionId
+    ? collections.find((c) => c.id === singleCollectionId)
     : null
 
   const [chipQuery, setChipQuery] = useState('')
@@ -471,12 +486,13 @@ export default function Library() {
       anchorRef.current = c.id
       return
     }
-    // Drill into the collection
+    // Drill into the collection: replace any existing collection/label
+    // filters with just this one and switch to the library grid view.
     anchorRef.current = c.id
-    setCollectionFilter(c.id)
-    setLabelFilter(null)
+    clearLibraryFilters()
+    toggleCollectionFilter(c.id)
     setView('library')
-  }, [collections, selectMode, selectedCollectionIds.size, setView])
+  }, [collections, selectMode, selectedCollectionIds.size, setView, clearLibraryFilters, toggleCollectionFilter])
 
   // Escape clears selection and exits selection mode
   useEffect(() => {
@@ -491,7 +507,30 @@ export default function Library() {
   // 'position' sort only makes sense inside a collection — snap back when leaving
   useEffect(() => {
     if (!inCollection && sort === 'position') setSort('series')
-  }, [inCollection, sort])
+  }, [inCollection, sort, setSort])
+
+  // Restore scroll position on mount; save it as the user scrolls so opening
+  // a comic and pressing Back returns to exactly where they left off.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (library.scrollTop) el.scrollTop = library.scrollTop
+    let frame = 0
+    const onScroll = () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        setLibraryScroll(el.scrollTop)
+      })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+    // Only restore once on mount; the listener handles ongoing updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const selectedComics = comics.filter((c) => selectedIds.has(c.id))
   const selectedCollections = collections.filter((c) => selectedCollectionIds.has(c.id))
@@ -543,7 +582,7 @@ export default function Library() {
             <option value="last_read">Last read</option>
           </select>
           <button
-            onClick={() => setOrder(o => o === 'asc' ? 'desc' : 'asc')}
+            onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}
             disabled={sort === 'position'}
             title={sort === 'position' ? 'Collection order is fixed' : (order === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending')}
             aria-label={`Sort ${order === 'asc' ? 'ascending' : 'descending'}`}
@@ -619,9 +658,9 @@ export default function Library() {
             <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-[var(--color-surface-raised)] to-transparent z-10" />
             <div className="px-4 py-2 flex gap-2 overflow-x-auto items-center">
               <button
-                onClick={() => { setLabelFilter(null); setCollectionFilter(null) }}
+                onClick={clearLibraryFilters}
                 className={`shrink-0 px-2.5 py-1 rounded-full text-xs transition-colors ${
-                  labelFilter === null && collectionFilter === null
+                  labelFilters.length === 0 && collectionFilters.length === 0
                     ? 'bg-[var(--color-accent)] text-white'
                     : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
                 }`}
@@ -638,39 +677,38 @@ export default function Library() {
                   className="shrink-0 w-24 sm:w-32 bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-full px-2.5 py-1 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors"
                 />
               )}
-              {visibleLabels.map((l) => (
-                <button
-                  key={`l-${l.id}`}
-                  onClick={() => {
-                    setCollectionFilter(null)
-                    setLabelFilter(labelFilter === l.id ? null : l.id)
-                  }}
-                  className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
-                    labelFilter === l.id
-                      ? 'text-white'
-                      : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                  }`}
-                  style={labelFilter === l.id ? { backgroundColor: l.color } : undefined}
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{ backgroundColor: l.color }}
-                  />
-                  {l.name}
-                </button>
-              ))}
+              {visibleLabels.map((l) => {
+                const active = labelFilters.includes(l.id)
+                return (
+                  <button
+                    key={`l-${l.id}`}
+                    onClick={() => toggleLabelFilter(l.id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                      active
+                        ? 'text-white'
+                        : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                    }`}
+                    style={active ? { backgroundColor: l.color } : undefined}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: l.color }}
+                    />
+                    {l.name}
+                  </button>
+                )
+              })}
               {visibleLabels.length > 0 && visibleCollections.length > 0 && (
                 <span className="shrink-0 h-5 w-px bg-[var(--color-border)]" aria-hidden />
               )}
-              {visibleCollections.map((c) => (
+              {visibleCollections.map((c) => {
+                const active = collectionFilters.includes(c.id)
+                return (
                 <button
                   key={`c-${c.id}`}
-                  onClick={() => {
-                    setLabelFilter(null)
-                    setCollectionFilter(collectionFilter === c.id ? null : c.id)
-                  }}
+                  onClick={() => toggleCollectionFilter(c.id)}
                   className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
-                    collectionFilter === c.id
+                    active
                       ? 'bg-[var(--color-accent)] text-white'
                       : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
                   }`}
@@ -679,7 +717,8 @@ export default function Library() {
                   {c.name}
                   <span className="opacity-60 tabular-nums">{c.comic_count ?? 0}</span>
                 </button>
-              ))}
+                )
+              })}
               {chipQuery && visibleLabels.length === 0 && visibleCollections.length === 0 && (
                 <span className="shrink-0 text-xs text-[var(--color-text-muted)] italic px-2">no matches</span>
               )}

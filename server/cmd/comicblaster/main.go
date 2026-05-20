@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -20,6 +21,68 @@ import (
 
 	_ "comicblaster/internal/reader" // register format readers via init()
 )
+
+// Version is the human-readable release tag baked into the binary. Override
+// at build time with: go build -ldflags "-X main.Version=v0.3.0"
+var Version = "v0.2.0"
+
+// Page-cache eviction: anything older than this is fair game for cleanup,
+// run on startup and on a recurring tick so the directory doesn't grow
+// without bound. Source comic mtime changes already shadow stale entries,
+// so the TTL only kills truly unused pages.
+const (
+	pageCacheTTL      = 14 * 24 * time.Hour
+	pageCacheInterval = 6 * time.Hour
+)
+
+func startPageCacheCleanup(dataDir string) {
+	root := filepath.Join(dataDir, "page_cache")
+	cleanup := func() {
+		cutoff := time.Now().Add(-pageCacheTTL)
+		var files, dirs int
+		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			if info.ModTime().Before(cutoff) {
+				if os.Remove(path) == nil {
+					files++
+				}
+			}
+			return nil
+		})
+		// Sweep empty per-comic subdirs.
+		entries, _ := os.ReadDir(root)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			d := filepath.Join(root, e.Name())
+			children, _ := os.ReadDir(d)
+			if len(children) == 0 {
+				if os.Remove(d) == nil {
+					dirs++
+				}
+			}
+		}
+		if files > 0 || dirs > 0 {
+			log.Printf("page_cache: evicted %d files / %d empty dirs (ttl=%s)", files, dirs, pageCacheTTL)
+		}
+	}
+
+	go func() {
+		cleanup()
+		t := time.NewTicker(pageCacheInterval)
+		defer t.Stop()
+		for range t.C {
+			cleanup()
+		}
+	}()
+}
 
 func main() {
 	configPath := flag.String("config", "", "path to config.yaml (default: ~/comicblaster-data/config.yaml)")
@@ -65,6 +128,9 @@ func main() {
 	go sc.Scan()
 	go sc.Watch(cfg.Library.ScanInterval)
 
+	startPageCacheCleanup(cfg.DataDir)
+
+	api.SetVersion(Version)
 	srv := api.NewServer(cfg, db, sc)
 	addr := fmt.Sprintf(":%d", cfg.Server.HTTPPort)
 	httpSrv := &http.Server{Addr: addr, Handler: srv}

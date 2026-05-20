@@ -659,6 +659,32 @@ function UsersSection({ self }: { self: User }) {
   )
 }
 
+// ── About section ───────────────────────────────────────────────────────────
+function AboutSection() {
+  const { data } = useQuery({
+    queryKey: ['version'],
+    queryFn: () => api.version(),
+    staleTime: 60_000,
+  })
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1">About</h2>
+      <p className="text-xs text-[var(--color-text-muted)]">
+        ComicBlaster <span className="font-mono text-[var(--color-text)]">{data?.version ?? '…'}</span>
+        {' · '}
+        <a
+          href="https://github.com/Gman0909/ComicBlaster"
+          target="_blank"
+          rel="noreferrer"
+          className="text-[var(--color-accent)] hover:underline"
+        >
+          source
+        </a>
+      </p>
+    </section>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function Settings() {
   const navigate = useNavigate()
@@ -693,6 +719,7 @@ export default function Settings() {
         {user.role === 'admin' && <LibraryPathsSection />}
         {user.role === 'admin' && <IgnoredSection />}
         {user.role === 'admin' && <UsersSection self={user} />}
+        <AboutSection />
       </div>
     </div>
   )

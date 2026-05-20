@@ -21,6 +21,14 @@ type server struct {
 	scanner *scanner.Scanner
 }
 
+// version is set by main via SetVersion at startup. It's deliberately a
+// package-level value so the public /api/version handler doesn't have to
+// thread it through the request context.
+var version = "dev"
+
+// SetVersion injects the binary's release tag for the /api/version handler.
+func SetVersion(v string) { version = v }
+
 type contextKey int
 
 const claimsKey contextKey = iota
@@ -37,11 +45,14 @@ func (s *server) routes() http.Handler {
 	r.Use(corsMiddleware)
 
 	r.Route("/api", func(r chi.Router) {
-		// Public — setup and login only
+		// Public — setup, login, version
 		r.Get("/auth/setup", s.handleSetupStatus)
 		r.Post("/auth/setup", s.handleSetup)
 		r.Post("/auth/login", s.handleLogin)
 		r.Post("/auth/logout", s.handleLogout)
+		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"version": version})
+		})
 
 		// Authenticated
 		r.Group(func(r chi.Router) {

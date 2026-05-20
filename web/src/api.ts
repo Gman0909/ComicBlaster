@@ -159,6 +159,9 @@ export const api = {
   reorderCollection: (id: number, comicIds: number[]) =>
     req<void>('PUT', `/api/collections/${id}/order`, { comic_ids: comicIds }),
 
+  // version (public)
+  version: () => req<{ version: string }>('GET', '/api/version'),
+
   // scan
   triggerScan: () => req<void>('POST', '/api/scan'),
   scanStatus: () => req<{ running: boolean; processed: number; current: string; last_scan: string; last_count: number }>('GET', '/api/scan/status'),

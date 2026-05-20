@@ -124,9 +124,15 @@ export default function ReaderEpub() {
     })
 
     return () => {
-      // sendBeacon-style final save on unmount (modal exit / route change)
+      // Final save on unmount (SPA back, modal exit, route change). The seq
+      // here is fresher than anything the queue's in-flight save can carry,
+      // so the server's seq-gated upsert guarantees this write wins.
       if (readyRef.current && cfiRef.current) {
-        const body = JSON.stringify({ last_page: 0, last_cfi: cfiRef.current })
+        const body = JSON.stringify({
+          last_page: 0,
+          last_cfi: cfiRef.current,
+          seq: Date.now(),
+        })
         navigator.sendBeacon(
           `/api/comics/${comicId}/progress`,
           new Blob([body], { type: 'application/json' }),

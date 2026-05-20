@@ -230,18 +230,34 @@ export default function Reader() {
     }
   }, [comicId, page, totalPages, comic?.format])
 
-  // Survive tab-close and hard reload via sendBeacon (bypasses React lifecycle)
+  // Final-save safety net.
+  //
+  // beforeunload covers the tab-close / hard-reload case. The cleanup return
+  // covers the SPA case — browser back, route change, anything that unmounts
+  // the Reader without going through goBack. Both paths fire sendBeacon with
+  // a current seq so this write reliably beats any queue save still in
+  // flight (server only accepts writes with a higher seq).
   useEffect(() => {
-    function onUnload() {
+    const send = () => {
       if (pageRef.current < 1) return
-      const body = JSON.stringify({ last_page: pageRef.current })
+      const body = JSON.stringify({
+        last_page: pageRef.current,
+        last_cfi: '',
+        seq: Date.now(),
+      })
       navigator.sendBeacon(
         `/api/comics/${comicId}/progress`,
         new Blob([body], { type: 'application/json' }),
       )
     }
-    window.addEventListener('beforeunload', onUnload)
-    return () => window.removeEventListener('beforeunload', onUnload)
+    window.addEventListener('beforeunload', send)
+    return () => {
+      window.removeEventListener('beforeunload', send)
+      // Unmount = SPA navigation (browser back, in-app nav, etc.). Fire a
+      // final beacon so the library always refetches against the user's
+      // latest position even if it crossed a backward move.
+      send()
+    }
   }, [comicId])
 
   // Await the save before navigating so the library always loads after the

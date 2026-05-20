@@ -108,8 +108,16 @@ export const api = {
   },
   comic: (id: number) => req<Comic>('GET', `/api/comics/${id}`),
   progress: (id: number) => req<{ last_page: number; updated_at: string } | null>('GET', `/api/comics/${id}/progress`),
-  saveProgress: (id: number, last_page: number, last_cfi?: string) =>
-    req<void>('POST', `/api/comics/${id}/progress`, { last_page, last_cfi: last_cfi ?? '' }),
+  saveProgress: (id: number, last_page: number, last_cfi?: string, seq?: number) =>
+    req<void>('POST', `/api/comics/${id}/progress`, {
+      last_page,
+      last_cfi: last_cfi ?? '',
+      // Date.now() is monotonic enough for ordering concurrent writes from a
+      // single client. The server only accepts writes whose seq exceeds the
+      // currently stored value, so out-of-order arrivals can't clobber a
+      // newer position with an older one.
+      seq: seq ?? Date.now(),
+    }),
   setCover: (id: number, page: number) =>
     req<void>('POST', `/api/comics/${id}/cover`, { page }),
   uploadCover: async (id: number, blob: Blob) => {

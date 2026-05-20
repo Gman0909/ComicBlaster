@@ -337,12 +337,13 @@ func (s *server) handlePostProgress(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		LastPage int    `json:"last_page"`
 		LastCFI  string `json:"last_cfi"`
+		Seq      int64  `json:"seq"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.db.UpsertProgress(getClaims(r).UserID, id, body.LastPage, body.LastCFI); err != nil {
+	if err := s.db.UpsertProgress(getClaims(r).UserID, id, body.LastPage, body.LastCFI, body.Seq); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save progress")
 		return
 	}

@@ -133,6 +133,7 @@ func (d *DB) migrate() error {
 			comic_id   INTEGER NOT NULL REFERENCES comics(id) ON DELETE CASCADE,
 			last_page  INTEGER NOT NULL DEFAULT 0,
 			last_cfi   TEXT    NOT NULL DEFAULT '',
+			seq        INTEGER NOT NULL DEFAULT 0,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (user_id, comic_id)
 		);
@@ -187,6 +188,8 @@ func (d *DB) migrate() error {
 	d.db.Exec(`ALTER TABLE comics ADD COLUMN custom_cover INTEGER NOT NULL DEFAULT 0`)
 	// Add last_cfi column for ePub reading position (ignore error if already exists)
 	d.db.Exec(`ALTER TABLE reading_progress ADD COLUMN last_cfi TEXT NOT NULL DEFAULT ''`)
+	// Add monotonic seq column for ordering concurrent progress writes.
+	d.db.Exec(`ALTER TABLE reading_progress ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -456,15 +459,24 @@ func (d *DB) DeleteComicByPath(path string) error {
 
 // --- progress ---
 
-func (d *DB) UpsertProgress(userID, comicID int64, lastPage int, lastCFI string) error {
+// UpsertProgress writes a reading position, but only if the supplied seq is
+// strictly greater than the seq already stored. This is the last-write-wins
+// guard for concurrent saves: rapid forward-then-backward paging fires
+// several saves whose HTTP responses can land in arbitrary order, and an
+// older value with a smaller seq must not be allowed to clobber a newer one.
+//
+// Pass seq=0 to disable the guard (used by the legacy sendBeacon path).
+func (d *DB) UpsertProgress(userID, comicID int64, lastPage int, lastCFI string, seq int64) error {
 	_, err := d.db.Exec(`
-		INSERT INTO reading_progress (user_id, comic_id, last_page, last_cfi, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO reading_progress (user_id, comic_id, last_page, last_cfi, seq, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id, comic_id) DO UPDATE SET
 			last_page  = excluded.last_page,
 			last_cfi   = excluded.last_cfi,
-			updated_at = excluded.updated_at`,
-		userID, comicID, lastPage, lastCFI,
+			seq        = excluded.seq,
+			updated_at = excluded.updated_at
+		WHERE excluded.seq = 0 OR excluded.seq > reading_progress.seq`,
+		userID, comicID, lastPage, lastCFI, seq,
 	)
 	return err
 }

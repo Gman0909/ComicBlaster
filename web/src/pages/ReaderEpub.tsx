@@ -59,6 +59,33 @@ export default function ReaderEpub() {
   const labelIDs = new Set((comic?.labels ?? []).map((l) => l.id))
   const collectionIDs = new Set((comic?.collections ?? []).map((c) => c.id))
 
+  // Single-flight CFI save queue. Same reason as the page-based reader:
+  // overlapping in-flight saves could otherwise land out of order on the
+  // server and overwrite a more recent position with an older one.
+  const saveQueueRef = useRef<{
+    runner: Promise<void> | null
+    pending: string | null
+    lastSaved: string | null
+  }>({ runner: null, pending: null, lastSaved: null })
+
+  const enqueueSave = useCallback((cfi: string) => {
+    const q = saveQueueRef.current
+    q.pending = cfi
+    if (q.runner) return q.runner
+    q.runner = (async () => {
+      while (q.pending !== null && q.pending !== q.lastSaved) {
+        const next = q.pending
+        q.pending = null
+        try {
+          await api.saveProgress(comicId, 0, next)
+          q.lastSaved = next
+        } catch {}
+      }
+      q.runner = null
+    })()
+    return q.runner
+  }, [comicId])
+
   // Mount the epub.js rendition once
   useEffect(() => {
     if (!comic || !containerRef.current) return
@@ -89,7 +116,7 @@ export default function ReaderEpub() {
       if (typeof p === 'number') setPct(Math.round(p * 100))
       // Persist after the first restore completes
       if (readyRef.current) {
-        api.saveProgress(comicId, 0, loc.start.cfi).catch(() => {})
+        enqueueSave(loc.start.cfi)
       }
     })
 
@@ -118,9 +145,17 @@ export default function ReaderEpub() {
     localStorage.setItem('cb-epub-font-idx', String(fontIdx))
   }, [fontIdx])
 
-  const next     = useCallback(() => renditionRef.current?.next(), [])
-  const prev     = useCallback(() => renditionRef.current?.prev(), [])
-  const goBack   = useCallback(() => navigate(-1), [navigate])
+  const next   = useCallback(() => renditionRef.current?.next(), [])
+  const prev   = useCallback(() => renditionRef.current?.prev(), [])
+  // Drain the save queue first so the latest position lands on the server
+  // before the library refetches. Catches the case where a backward move
+  // would otherwise be clobbered by a slower forward save still in flight.
+  const goBack = useCallback(async () => {
+    if (cfiRef.current) {
+      try { await enqueueSave(cfiRef.current) } catch {}
+    }
+    navigate(-1)
+  }, [enqueueSave, navigate])
 
   // Keyboard
   useEffect(() => {

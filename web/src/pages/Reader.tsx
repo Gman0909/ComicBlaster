@@ -158,11 +158,50 @@ export default function Reader() {
   // Keep ref in sync so goBack / beforeunload always see the latest page
   useEffect(() => { pageRef.current = page }, [page])
 
-  // Save immediately on every page change (fire-and-forget; goBack awaits separately)
+  // Single-flight save queue.
+  //
+  // Previously each page change fired an independent fetch; with rapid paging
+  // (or just preload-warmed pages flipping fast) several saves could be in
+  // flight at once, and Go's handler goroutines could resolve them in any
+  // order. That made backward moves "lose" — a stale forward save would
+  // land last and overwrite the user's true position on the server.
+  //
+  // The fix is to keep at most one save in flight at a time. While one is
+  // running, newer page values overwrite a single `pending` slot. When the
+  // running save completes, the pending value (if any) is sent next. Net
+  // effect: server is always updated in user-time order, with the latest
+  // value as the final write.
+  const saveQueueRef = useRef<{
+    runner: Promise<void> | null
+    pending: number | null
+    lastSaved: number | null
+  }>({ runner: null, pending: null, lastSaved: null })
+
+  const enqueueSave = useCallback((target: number) => {
+    const q = saveQueueRef.current
+    q.pending = target
+    if (q.runner) return q.runner
+    q.runner = (async () => {
+      while (q.pending !== null && q.pending !== q.lastSaved) {
+        const next = q.pending
+        q.pending = null
+        try {
+          await api.saveProgress(comicId, next)
+          q.lastSaved = next
+        } catch {
+          // Network glitch — leave lastSaved alone so the next change retries.
+        }
+      }
+      q.runner = null
+    })()
+    return q.runner
+  }, [comicId])
+
+  // Page changes feed the queue. goBack awaits it.
   useEffect(() => {
     if (!readyRef.current || page <= 1) return
-    api.saveProgress(comicId, page).catch(() => {})
-  }, [comicId, page])
+    enqueueSave(page)
+  }, [page, enqueueSave])
 
   // Preload neighbouring pages so the next flip is served from the browser
   // cache instead of waiting on the network. Two pages ahead, one behind —
@@ -203,11 +242,15 @@ export default function Reader() {
     return () => window.removeEventListener('beforeunload', onUnload)
   }, [comicId])
 
-  // Await the save before navigating so the library always loads after the write
+  // Await the save before navigating so the library always loads after the
+  // write — and crucially, await the *queue draining*, not just one fetch,
+  // so any in-flight save can't land after we leave the page.
   const goBack = useCallback(async () => {
-    await api.saveProgress(comicId, pageRef.current).catch(() => {})
+    try {
+      await enqueueSave(pageRef.current)
+    } catch {}
     navigate(-1)
-  }, [comicId, navigate])
+  }, [enqueueSave, navigate])
 
   const [thumbnailOpen, setThumbnailOpen] = useState(false)
 

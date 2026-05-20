@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -184,6 +185,25 @@ func (s *server) handleGetCover(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, c.CoverPath)
 }
 
+// Quantise the requested viewport width to a small set of buckets so the cache
+// gets repeated hits across slightly different screen widths instead of one
+// entry per browser pixel. ~50px granularity is invisible visually but lets
+// every 1920px-ish desktop share a single cached pixmap.
+func bucketedWidth(w int) int {
+	if w <= 0 {
+		return 0
+	}
+	const bucket = 50
+	q := ((w + bucket - 1) / bucket) * bucket
+	if q < 100 {
+		q = 100
+	}
+	if q > 3000 {
+		q = 3000
+	}
+	return q
+}
+
 func (s *server) handleGetPage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -200,6 +220,28 @@ func (s *server) handleGetPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil || c == nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return
+	}
+
+	// Fast path: resized request served from disk cache. The cache key
+	// includes the source file's mtime so a re-scanned / replaced file
+	// naturally bypasses stale entries.
+	var targetWidth int
+	if ws := r.URL.Query().Get("width"); ws != "" {
+		if tw, err := strconv.Atoi(ws); err == nil {
+			targetWidth = bucketedWidth(tw)
+		}
+	}
+	var cachePath string
+	if targetWidth > 0 {
+		mtime := c.FileMtime.Unix()
+		cacheDir := filepath.Join(s.cfg.DataDir, "page_cache", strconv.FormatInt(id, 10))
+		cachePath = filepath.Join(cacheDir, fmt.Sprintf("%d_%d_%d.jpg", n, targetWidth, mtime))
+		if _, err := os.Stat(cachePath); err == nil {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			http.ServeFile(w, r, cachePath)
+			return
+		}
 	}
 
 	ext := "." + strings.ToLower(c.Format)
@@ -221,22 +263,31 @@ func (s *server) handleGetPage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	// Optional server-side resize
-	widthStr := r.URL.Query().Get("width")
-	if widthStr != "" {
-		if targetWidth, err := strconv.Atoi(widthStr); err == nil && targetWidth > 0 {
-			if img, _, err := image.Decode(rc); err == nil {
-				resized := imaging.Resize(img, targetWidth, 0, imaging.Lanczos)
+	if targetWidth > 0 {
+		if img, _, err := image.Decode(rc); err == nil {
+			resized := imaging.Resize(img, targetWidth, 0, imaging.Lanczos)
+			var buf bytes.Buffer
+			if err := imaging.Encode(&buf, resized, imaging.JPEG, imaging.JPEGQuality(85)); err == nil {
+				// Write to a temp file then rename so concurrent readers never
+				// see a partial JPEG. Cache misses on disk-full are silently
+				// ignored — we still serve the in-memory result.
+				if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err == nil {
+					tmp := cachePath + ".tmp"
+					if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err == nil {
+						os.Rename(tmp, cachePath)
+					}
+				}
 				w.Header().Set("Content-Type", "image/jpeg")
-				w.Header().Set("Cache-Control", "public, max-age=3600")
-				imaging.Encode(w, resized, imaging.JPEG, imaging.JPEGQuality(85))
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+				w.Write(buf.Bytes())
 				return
 			}
 		}
 	}
 
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, rc)
 }
 

@@ -7,6 +7,18 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Image, Tag, Bookmark } from 'luci
 import { api } from '../api'
 import SetThumbnailModal from '../components/SetThumbnailModal'
 
+// Resets the zoom/pan transform whenever the page changes — instead of
+// remounting the entire TransformWrapper (which throws away the canvas /
+// img element and flashes a blank frame), we keep the wrapper alive and
+// snap its transform back to identity on each new page.
+function PageResetOnChange({ page }: { page: number }) {
+  const { resetTransform } = useControls()
+  useEffect(() => {
+    resetTransform(0)
+  }, [page, resetTransform])
+  return null
+}
+
 // Intercepts wheel events on the container.
 //   - Vertical wheel  → zoom centered on the viewport (when at fit-to-screen
 //     a downward scroll zooms out is a no-op since minScale=1, so this only
@@ -151,6 +163,31 @@ export default function Reader() {
     if (!readyRef.current || page <= 1) return
     api.saveProgress(comicId, page).catch(() => {})
   }, [comicId, page])
+
+  // Preload neighbouring pages so the next flip is served from the browser
+  // cache instead of waiting on the network. Two pages ahead, one behind —
+  // weighted forward since most readers move that direction.
+  useEffect(() => {
+    if (!comic || comic.format === 'pdf' || comic.format === 'epub') return
+    if (totalPages <= 1) return
+    const width = window.innerWidth
+    const targets = [page + 1, page + 2, page - 1].filter(
+      (n) => n >= 1 && n <= totalPages && n !== page,
+    )
+    const imgs: HTMLImageElement[] = []
+    for (const n of targets) {
+      // window.Image — disambiguated from the lucide `Image` icon imported above.
+      const img = new window.Image()
+      img.decoding = 'async'
+      img.src = api.pageUrl(comicId, n, width)
+      imgs.push(img)
+    }
+    return () => {
+      // Cancel in-flight preloads by clearing the src; the browser keeps
+      // anything already downloaded in cache.
+      for (const img of imgs) img.src = ''
+    }
+  }, [comicId, page, totalPages, comic?.format])
 
   // Survive tab-close and hard reload via sendBeacon (bypasses React lifecycle)
   useEffect(() => {
@@ -346,7 +383,6 @@ export default function Reader() {
         onPointerUp={onPointerUp}
       >
         <TransformWrapper
-          key={page}
           initialScale={1}
           minScale={1}
           maxScale={5}
@@ -366,35 +402,26 @@ export default function Reader() {
             onZoomChange={setZoomed}
             onPageDelta={(d) => goTo(pageRef.current + d)}
           />
+          <PageResetOnChange page={page} />
           <TransformComponent
             wrapperStyle={{ width: '100%', height: '100dvh' }}
             contentStyle={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100dvh' }}
           >
-            <AnimatePresence mode="wait">
-              {comic.format === 'pdf' ? (
-                <motion.div
-                  key={page}
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
-                >
-                  <Suspense fallback={null}>
-                    <PDFPage url={api.fileUrl(comicId)} page={page} onPageCount={setPdfPageCount} />
-                  </Suspense>
-                </motion.div>
-              ) : (
-                <motion.img
-                  key={page}
-                  src={api.pageUrl(comicId, page, window.innerWidth)}
-                  alt={`Page ${page}`}
-                  className="max-h-dvh max-w-full object-contain"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
-                  draggable={false}
-                />
-              )}
-            </AnimatePresence>
+            {/* No fade transition — neighbours are preloaded, so the new
+                image / canvas appears as soon as the bits are ready. */}
+            {comic.format === 'pdf' ? (
+              <Suspense fallback={null}>
+                <PDFPage url={api.fileUrl(comicId)} page={page} onPageCount={setPdfPageCount} />
+              </Suspense>
+            ) : (
+              <img
+                src={api.pageUrl(comicId, page, window.innerWidth)}
+                alt={`Page ${page}`}
+                className="max-h-dvh max-w-full object-contain"
+                decoding="async"
+                draggable={false}
+              />
+            )}
           </TransformComponent>
         </TransformWrapper>
       </div>

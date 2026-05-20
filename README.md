@@ -5,6 +5,9 @@ React on the front end. Runs comfortably on a Raspberry Pi 5 or any small
 home server. Designed to read your library off a NAS/SMB mount or a local
 folder — no uploads required.
 
+<img width="2165" height="1184" alt="image" src="https://github.com/user-attachments/assets/3a079684-d45f-4501-b1dd-e2cf7e52309a" />
+
+
 ## Features
 
 - **Formats**: CBZ / ZIP, CBR (pure-Go RAR decoder), PDF (rendered client-side

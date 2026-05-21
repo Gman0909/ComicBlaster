@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'framer-motion'
-import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize } from 'lucide-react'
+import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, ArrowUpDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize } from 'lucide-react'
 import { api, type Comic, type Collection, type User } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
@@ -220,6 +220,87 @@ function ProfileMenu({ user, theme, scanning, isFullscreen, onScan, onToggleThem
               danger
               onClick={() => { onSignOut(); close() }}
             />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Mobile-only collapsed sort control. On screens where the inline
+// <select> + arrow button steal too much room from the search box, this
+// icon button opens a popover with the same sort options + asc/desc
+// toggle. Desktop keeps the inline controls — they're discoverable at a
+// glance there, and there's no width pressure.
+function MobileSortMenu({ sort, order, onSortChange, onOrderChange, inCollection }: {
+  sort: string
+  order: 'asc' | 'desc'
+  onSortChange: (v: string) => void
+  onOrderChange: (v: 'asc' | 'desc') => void
+  inCollection: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const options: Array<{ value: string; label: string }> = []
+  if (inCollection) options.push({ value: 'position', label: 'Collection order' })
+  options.push(
+    { value: 'series', label: 'Series' },
+    { value: 'title', label: 'Title' },
+    { value: 'date_added', label: 'Date added' },
+    { value: 'last_read', label: 'Last read' },
+  )
+  const close = () => setOpen(false)
+  return (
+    <div className="relative sm:hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Sort"
+        aria-label="Sort"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`p-2.5 rounded-md transition-colors ${
+          open
+            ? 'bg-[var(--color-surface-overlay)] text-[var(--color-text)]'
+            : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+        }`}
+      >
+        <ArrowUpDown size={16} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={close} aria-hidden />
+          <div
+            role="menu"
+            className="absolute right-0 top-full mt-2 z-40 w-56 rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] shadow-2xl overflow-hidden"
+          >
+            <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+              Sort by
+            </div>
+            {options.map((opt) => (
+              <button
+                key={opt.value}
+                role="menuitemradio"
+                aria-checked={sort === opt.value}
+                onClick={() => { onSortChange(opt.value); close() }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-overlay)] transition-colors"
+              >
+                <span className="flex-1 text-left">{opt.label}</span>
+                {sort === opt.value && <Check size={14} className="text-[var(--color-accent)]" />}
+              </button>
+            ))}
+            <div className="border-t border-[var(--color-border)]" />
+            <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+              Order
+            </div>
+            <button
+              role="menuitem"
+              onClick={() => onOrderChange(order === 'asc' ? 'desc' : 'asc')}
+              disabled={sort === 'position'}
+              title={sort === 'position' ? 'Collection order is fixed' : undefined}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-overlay)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {order === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+              <span className="flex-1 text-left">{order === 'asc' ? 'Ascending' : 'Descending'}</span>
+            </button>
           </div>
         </>
       )}
@@ -667,8 +748,10 @@ export default function Library() {
           />
         </div>
 
-        {/* Sort — hidden in collections view */}
-        <div className={`flex items-center gap-0 shrink-0 ${view === 'collections' ? 'hidden' : ''}`}>
+        {/* Sort — hidden in collections view. Inline controls show only on sm+;
+            on mobile the same options collapse into MobileSortMenu below to
+            keep the search box wide enough to be usable. */}
+        <div className={`hidden sm:flex items-center gap-0 shrink-0 ${view === 'collections' ? 'sm:hidden' : ''}`}>
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value)}
@@ -691,6 +774,15 @@ export default function Library() {
             {order === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
           </button>
         </div>
+        {view !== 'collections' && (
+          <MobileSortMenu
+            sort={sort}
+            order={order}
+            onSortChange={setSort}
+            onOrderChange={setOrder}
+            inCollection={!!inCollection}
+          />
+        )}
 
         <div className="flex items-center gap-1 ml-auto">
           <button

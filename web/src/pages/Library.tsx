@@ -572,37 +572,53 @@ export default function Library() {
   //   1. If the user just came back from a comic they opened from this
   //      library, scroll to *that* specific comic (centered) — guarantees
   //      it's visible regardless of where the viewport was at click time.
-  //      Consumed once and cleared so refreshing the page or navigating
-  //      elsewhere doesn't keep snapping back to it.
-  //
   //   2. Otherwise (cold mount, e.g. arriving from Settings) fall back to
   //      the topmost-visible comic recorded during prior scrolling.
   //
-  // Both use virtualizer.scrollToIndex so they're immune to estimateSize
-  // drift and to column-count changes between sessions. Double rAF gives
-  // the virtualizer at least one paint to lay out row positions.
+  // CRITICAL: do not run until ResizeObserver has measured the grid
+  // container (gridWidth > 0). Before that, `cols` is the default (4) and
+  // the rowHeight estimate is a guess (320), so scrollToIndex would land
+  // in the wrong row. Both strategies are latched via scrollRestoredRef
+  // so subsequent data refetches / re-renders don't re-trigger.
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
     if (scrollRestoredRef.current) return
-    if (!data || comics.length === 0 || cols <= 0) return
+    if (!data || comics.length === 0) return
+    if (gridWidth === 0 || cols <= 0) return
 
     const maxRow = Math.max(0, Math.ceil(comics.length / cols) - 1)
+    const el = scrollRef.current
+
+    function landAtRow(row: number, align: 'start' | 'center') {
+      // measure() forces the virtualizer to recompute positions with the
+      // latest rowHeight estimate; rAF gives that pass time to flush.
+      virtualizer.measure()
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          virtualizer.scrollToIndex(row, { align })
+          // Defensive fallback: scrollToIndex sometimes lands a partial
+          // row off-screen depending on viewport math. Force the scroll
+          // element to the computed offset as a backup.
+          if (el && align === 'center') {
+            const offset = row * rowHeight
+            const desired = Math.max(0, offset - el.clientHeight / 2 + rowHeight / 2)
+            const max = el.scrollHeight - el.clientHeight
+            el.scrollTop = Math.min(desired, Math.max(0, max))
+          }
+          scrollRestoredRef.current = true
+        })
+      })
+    }
 
     if (lastOpenedComicId !== null) {
       const idx = comics.findIndex((c) => c.id === lastOpenedComicId)
       if (idx >= 0) {
         const row = Math.min(Math.floor(idx / cols), maxRow)
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            virtualizer.scrollToIndex(row, { align: 'center' })
-            setLastOpenedComicId(null)
-            scrollRestoredRef.current = true
-          })
-        })
+        landAtRow(row, 'center')
+        setLastOpenedComicId(null)
         return
       }
-      // Comic no longer in the current filtered set; drop the marker and
-      // fall through to the generic restore.
+      // Comic no longer in the current filtered set; drop the marker.
       setLastOpenedComicId(null)
     }
 
@@ -611,14 +627,8 @@ export default function Library() {
       scrollRestoredRef.current = true
       return
     }
-    const targetRow = Math.min(Math.floor(targetComic / cols), maxRow)
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        virtualizer.scrollToIndex(targetRow, { align: 'start' })
-        scrollRestoredRef.current = true
-      })
-    })
-  }, [data, comics, cols, library.scrollComic, lastOpenedComicId, setLastOpenedComicId, virtualizer])
+    landAtRow(Math.min(Math.floor(targetComic / cols), maxRow), 'start')
+  }, [data, comics, cols, gridWidth, rowHeight, library.scrollComic, lastOpenedComicId, setLastOpenedComicId, virtualizer])
 
   async function handleLogout() {
     await api.logout().catch(() => {})

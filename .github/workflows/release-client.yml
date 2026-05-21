@@ -62,7 +62,14 @@ jobs:
       - name: Install NSIS
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: choco install nsis -y --no-progress --limitoutput
+        run: |
+          choco install nsis -y --no-progress --limitoutput
+          # choco installs into "C:\Program Files (x86)\NSIS" but doesn't
+          # update PATH for subsequent steps in the same job. Append it
+          # via GITHUB_PATH so `wails build -nsis` can find makensis.
+          $nsisPath = (Resolve-Path 'C:\Program Files (x86)\NSIS').Path
+          Write-Host "Adding $nsisPath to PATH"
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0

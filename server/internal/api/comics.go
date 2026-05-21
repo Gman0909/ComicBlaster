@@ -372,6 +372,32 @@ func (s *server) handlePostProgress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetPageCount lets the client (PDF or ePub reader) backfill page_count
+// for formats the scanner can't enumerate server-side. PDFs report their real
+// numPages once pdf.js opens the doc; ePubs report 100 so the existing pct
+// formula (last_page / page_count * 100) doubles as a percentage display in
+// the library card. Any logged-in user can hit it — the value is a property
+// of the file, not the user.
+func (s *server) handleSetPageCount(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		PageCount int `json:"page_count"`
+	}
+	if err := decode(r, &body); err != nil || body.PageCount <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if _, err := s.db.SetComicPageCount(id, body.PageCount); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update page count")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) handleSetCover(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {

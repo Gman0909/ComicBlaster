@@ -71,6 +71,7 @@ func (s *server) routes() http.Handler {
 			r.Get("/comics/{id}/pages/{n}", s.handleGetPage)
 			r.Get("/comics/{id}/progress", s.handleGetProgress)
 			r.Post("/comics/{id}/progress", s.handlePostProgress)
+			r.Post("/comics/{id}/pagecount", s.handleSetPageCount)
 
 			r.Post("/scan", s.handleTriggerScan)
 			r.Get("/scan/status", s.handleScanStatus)

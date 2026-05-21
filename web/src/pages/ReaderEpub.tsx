@@ -42,6 +42,11 @@ export default function ReaderEpub() {
   const renditionRef = useRef<Rendition | null>(null)
   const cfiRef = useRef<string>('')
   const readyRef = useRef(false)
+  // ePub has no native concept of "page count" — store rounded percentage
+  // (0-100) in last_page so the existing library bar formula
+  // (last_page / page_count * 100) yields a percentage display. pctRef is
+  // updated by the relocated handler and read by every save/beacon.
+  const pctRef = useRef(0)
 
   const [controlsVisible, setControlsVisible] = useState(true)
   const [pct, setPct] = useState(0)
@@ -80,7 +85,8 @@ export default function ReaderEpub() {
         const next = q.pending
         q.pending = null
         try {
-          await api.saveProgress(comicId, 0, next)
+          // last_page doubles as percentage for ePub (see pctRef comment).
+          await api.saveProgress(comicId, pctRef.current, next)
           q.lastSaved = next
         } catch {}
       }
@@ -114,14 +120,32 @@ export default function ReaderEpub() {
 
     rendition.on('relocated', (loc: Location) => {
       cfiRef.current = loc.start.cfi
-      // location.start.percentage is 0..1; fall back to displayed page math
+      // location.start.percentage is 0..1; round to 0-100 and stash in pctRef
+      // so saves can carry it through to the server.
       const p = (loc as any).start?.percentage
-      if (typeof p === 'number') setPct(Math.round(p * 100))
+      if (typeof p === 'number') {
+        const rounded = Math.max(0, Math.min(100, Math.round(p * 100)))
+        pctRef.current = rounded
+        setPct(rounded)
+      }
       // Persist after the first restore completes
       if (readyRef.current) {
         enqueueSave(loc.start.cfi)
       }
     })
+
+    // Tell the server this ePub has 100 "pages" — the synthetic denominator
+    // that lets last_page (= percentage) render as a library bar via the
+    // existing pct = last_page/page_count formula. Fires once per mount;
+    // server no-ops when page_count is already 100.
+    if (comic.format === 'epub' && comic.page_count !== 100) {
+      api.setPageCount(comicId, 100)
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ['comic', comicId] })
+          queryClient.invalidateQueries({ queryKey: ['comics'] })
+        })
+        .catch(() => {})
+    }
 
     return () => {
       // Final save on unmount (SPA back, modal exit, route change). The seq
@@ -129,7 +153,7 @@ export default function ReaderEpub() {
       // so the server's seq-gated upsert guarantees this write wins.
       if (readyRef.current && cfiRef.current) {
         const body = JSON.stringify({
-          last_page: 0,
+          last_page: pctRef.current,
           last_cfi: cfiRef.current,
           seq: Date.now(),
         })

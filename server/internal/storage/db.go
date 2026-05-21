@@ -467,6 +467,31 @@ func (d *DB) DeleteComicByPath(path string) error {
 	return err
 }
 
+// SetComicPageCount lets the client backfill page_count for formats the
+// scanner can't parse (PDF, ePub). Returns the resulting value so the
+// caller can detect a no-op vs an actual change.
+//
+// We only overwrite when the new value differs and is plausibly accurate
+// (non-zero). The intent is: scanner stored 0, the reader has now opened
+// the file and knows the real count, persist it once so the library bar
+// works without re-scanning.
+func (d *DB) SetComicPageCount(id int64, count int) (int, error) {
+	if count <= 0 {
+		return 0, nil
+	}
+	if _, err := d.db.Exec(
+		`UPDATE comics SET page_count = ? WHERE id = ? AND page_count <> ?`,
+		count, id, count,
+	); err != nil {
+		return 0, err
+	}
+	var got int
+	if err := d.db.QueryRow(`SELECT page_count FROM comics WHERE id = ?`, id).Scan(&got); err != nil {
+		return 0, err
+	}
+	return got, nil
+}
+
 // --- progress ---
 
 // UpsertProgress writes a reading position, but only if the supplied seq is

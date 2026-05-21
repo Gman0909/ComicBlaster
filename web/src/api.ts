@@ -118,6 +118,11 @@ export const api = {
       // newer position with an older one.
       seq: seq ?? Date.now(),
     }),
+  // Backfill page_count for formats the scanner can't enumerate server-side
+  // (PDF reports its real numPages once pdf.js opens the doc; ePub posts 100
+  // so the existing pct formula doubles as a percentage display).
+  setPageCount: (id: number, page_count: number) =>
+    req<void>('POST', `/api/comics/${id}/pagecount`, { page_count }),
   setCover: (id: number, page: number) =>
     req<void>('POST', `/api/comics/${id}/cover`, { page }),
   uploadCover: async (id: number, blob: Blob) => {

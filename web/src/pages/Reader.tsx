@@ -276,6 +276,24 @@ export default function Reader() {
     enqueueSave(page)
   }, [page, enqueueSave])
 
+  // Once pdf.js has opened the PDF and reported its numPages, persist that
+  // count back to the server so the library card's progress bar — which is
+  // computed from last_page / page_count — works for PDFs. The scanner can't
+  // do this server-side because there's no Go PDF reader bundled.
+  useEffect(() => {
+    if (!comic || comic.format !== 'pdf') return
+    if (pdfPageCount <= 0) return
+    if (pdfPageCount === comic.page_count) return
+    api.setPageCount(comicId, pdfPageCount)
+      .then(() => {
+        // Refresh both the detail and any list queries so the library bar
+        // and the slider's max reflect the new count without a manual reload.
+        queryClient.invalidateQueries({ queryKey: ['comic', comicId] })
+        queryClient.invalidateQueries({ queryKey: ['comics'] })
+      })
+      .catch(() => {})
+  }, [comic, comic?.format, comic?.page_count, pdfPageCount, comicId, queryClient])
+
   // Preload neighbouring pages so the next flip is served from the browser
   // cache instead of waiting on the network. Two pages ahead, one behind —
   // weighted forward since most readers move that direction.

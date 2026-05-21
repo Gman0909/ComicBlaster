@@ -176,6 +176,15 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 				tokenStr = cookie.Value
 			}
 		}
+		// Third fallback: ?token= query param. <img>, <canvas>, and pdf.js
+		// subresource fetches can't be customised to carry an
+		// Authorization header, but they can ride a query string. The
+		// native (bearer-mode) client appends ?token=<jwt> to media URLs
+		// returned by coverUrl/pageUrl/fileUrl. Only honoured on GET so
+		// it can't be used as a CSRF carrier on writes.
+		if tokenStr == "" && r.Method == http.MethodGet {
+			tokenStr = r.URL.Query().Get("token")
+		}
 		if tokenStr == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return

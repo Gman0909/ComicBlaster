@@ -279,14 +279,29 @@ export const api = {
   scanStatus: () => req<{ running: boolean; processed: number; current: string; last_scan: string; last_count: number }>('GET', '/api/scan/status'),
 
   // URL helpers (not fetched via api — used directly by img/canvas/pdf.js).
-  // Prefix with the configured baseUrl so the native client points at the
-  // remote Pi instead of its own (empty) origin. Note: <img>, <canvas>,
-  // and pdf.js DON'T attach the Authorization header from configureApi —
-  // for the native bearer-mode case, the Pi will need to accept a token
-  // query param (?token=…) on these endpoints in a follow-up. For now,
-  // the browser/cookie case is unaffected.
-  coverUrl: (id: number) => apiUrl(`/api/comics/${id}/cover`),
+  // Two things happen here:
+  //   1. Prefix with the configured baseUrl so the native client points
+  //      at the remote Pi instead of its own (empty) origin.
+  //   2. In bearer mode, append ?token=<jwt> to the URL. <img>, <canvas>,
+  //      and pdf.js subresource loads can't carry an Authorization
+  //      header, but they can ride a query string. The server's
+  //      requireAuth accepts ?token= as a third fallback on GET only.
+  // Cookie mode skips step 2 — the cookie already authenticates these.
+  coverUrl: (id: number) => mediaUrl(`/api/comics/${id}/cover`),
   pageUrl: (id: number, n: number, width?: number) =>
-    apiUrl(`/api/comics/${id}/pages/${n}${width ? `?width=${width}` : ''}`),
-  fileUrl: (id: number) => apiUrl(`/api/comics/${id}/file`),
+    mediaUrl(`/api/comics/${id}/pages/${n}${width ? `?width=${width}` : ''}`),
+  fileUrl: (id: number) => mediaUrl(`/api/comics/${id}/file`),
+}
+
+// mediaUrl builds the URL for a subresource that the browser (not our fetch
+// wrapper) will load — <img src=>, <canvas src=>, pdf.js worker, epub.js
+// resource pulls. Per the comment above, this is where ?token= is appended
+// in bearer mode.
+function mediaUrl(path: string): string {
+  const url = apiUrl(path)
+  if (apiConfig.auth !== 'bearer') return url
+  const t = apiConfig.getToken()
+  if (!t) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(t)}`
 }

@@ -509,12 +509,11 @@ export default function Library() {
     if (!inCollection && sort === 'position') setSort('series')
   }, [inCollection, sort, setSort])
 
-  // Restore scroll position on mount; save it as the user scrolls so opening
-  // a comic and pressing Back returns to exactly where they left off.
+  // Save scroll position as the user scrolls so opening a comic and
+  // pressing Back returns to exactly where they left off. RAF-throttled.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    if (library.scrollTop) el.scrollTop = library.scrollTop
     let frame = 0
     const onScroll = () => {
       if (frame) return
@@ -528,9 +527,34 @@ export default function Library() {
       el.removeEventListener('scroll', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
-    // Only restore once on mount; the listener handles ongoing updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Restore scroll position. On mount the comics array is empty and the
+  // virtualizer's total height is 0, so a naive scrollTop assignment gets
+  // clamped to 0 (visible bug for users returning from a comic). Wait for
+  // both the data and the column count to settle, then assign once.
+  const scrollRestoredRef = useRef(false)
+  useEffect(() => {
+    if (scrollRestoredRef.current) return
+    const el = scrollRef.current
+    if (!el || !data) return
+    const target = library.scrollTop
+    if (target <= 0 || comics.length === 0 || cols <= 0) {
+      // Nothing to do (or not ready yet — try again on next deps change).
+      if (target <= 0) scrollRestoredRef.current = true
+      return
+    }
+    // Use a double rAF so the virtualizer has had at least one paint to set
+    // the inner container's height before we scroll into it.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el2 = scrollRef.current
+        if (el2) el2.scrollTop = target
+        scrollRestoredRef.current = true
+      })
+    })
+  }, [data, comics.length, cols, library.scrollTop])
 
   const selectedComics = comics.filter((c) => selectedIds.has(c.id))
   const selectedCollections = collections.filter((c) => selectedCollectionIds.has(c.id))

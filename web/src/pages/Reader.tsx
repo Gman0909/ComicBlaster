@@ -13,11 +13,21 @@ import { useFullscreen } from '../hooks/useFullscreen'
 // remounting the entire TransformWrapper (which throws away the canvas /
 // img element and flashes a blank frame), we keep the wrapper alive and
 // snap its transform back to identity on each new page.
+//
+// IMPORTANT: useControls() returns a fresh object on every render, so its
+// resetTransform reference changes every time. Listing it as an effect
+// dependency would fire resetTransform(0) on every parent re-render —
+// including the re-render triggered by pinch-zoom updating `zoomed` state,
+// which would wipe out the user's pinch the moment the touch ended. Instead
+// we keep resetTransform in a ref (updated each render) and only fire when
+// the page number actually changes.
 function PageResetOnChange({ page }: { page: number }) {
   const { resetTransform } = useControls()
+  const resetRef = useRef(resetTransform)
+  resetRef.current = resetTransform
   useEffect(() => {
-    resetTransform(0)
-  }, [page, resetTransform])
+    resetRef.current(0)
+  }, [page])
   return null
 }
 

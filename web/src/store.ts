@@ -11,7 +11,10 @@ interface LibraryUiState {
   order: SortOrder
   labelFilters: number[]      // serialised as array for persistence; toggled via setters
   collectionFilters: number[]
-  scrollTop: number
+  // Index of the topmost visible comic in the grid. Stored as a comic
+  // index (not a row index or pixel offset) so it survives column-count
+  // changes and is independent of the virtualizer's estimateSize.
+  scrollComic: number
 }
 
 interface AppState {
@@ -32,7 +35,7 @@ interface AppState {
   toggleLabelFilter: (id: number) => void
   toggleCollectionFilter: (id: number) => void
   clearLibraryFilters: () => void
-  setLibraryScroll: (px: number) => void
+  setLibraryScroll: (comicIndex: number) => void
 }
 
 const defaultLibrary: LibraryUiState = {
@@ -41,7 +44,7 @@ const defaultLibrary: LibraryUiState = {
   order: 'asc',
   labelFilters: [],
   collectionFilters: [],
-  scrollTop: 0,
+  scrollComic: 0,
 }
 
 export const useStore = create<AppState>()(
@@ -59,7 +62,7 @@ export const useStore = create<AppState>()(
 
       library: defaultLibrary,
       setLibrarySearch: (q) =>
-        set((s) => ({ library: { ...s.library, search: q, scrollTop: 0 } })),
+        set((s) => ({ library: { ...s.library, search: q, scrollComic: 0 } })),
       setLibrarySort: (sort) =>
         set((s) => ({ library: { ...s.library, sort } })),
       setLibraryOrder: (order) =>
@@ -70,7 +73,7 @@ export const useStore = create<AppState>()(
           const next = has
             ? s.library.labelFilters.filter((x) => x !== id)
             : [...s.library.labelFilters, id]
-          return { library: { ...s.library, labelFilters: next, scrollTop: 0 } }
+          return { library: { ...s.library, labelFilters: next, scrollComic: 0 } }
         }),
       toggleCollectionFilter: (id) =>
         set((s) => {
@@ -78,12 +81,12 @@ export const useStore = create<AppState>()(
           const next = has
             ? s.library.collectionFilters.filter((x) => x !== id)
             : [...s.library.collectionFilters, id]
-          return { library: { ...s.library, collectionFilters: next, scrollTop: 0 } }
+          return { library: { ...s.library, collectionFilters: next, scrollComic: 0 } }
         }),
       clearLibraryFilters: () =>
-        set((s) => ({ library: { ...s.library, labelFilters: [], collectionFilters: [], scrollTop: 0 } })),
-      setLibraryScroll: (scrollTop) =>
-        set((s) => ({ library: { ...s.library, scrollTop } })),
+        set((s) => ({ library: { ...s.library, labelFilters: [], collectionFilters: [], scrollComic: 0 } })),
+      setLibraryScroll: (scrollComic) =>
+        set((s) => ({ library: { ...s.library, scrollComic } })),
     }),
     {
       name: 'cb-store',

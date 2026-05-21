@@ -16,6 +16,7 @@ const CARD_ASPECT = 1.54 // typical comic cover ratio (taller than wide)
 
 function useColumns() {
   const [cols, setCols] = useState(4)
+  const [width, setWidth] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
   const obs = useRef<ResizeObserver | undefined>(undefined)
 
@@ -24,13 +25,14 @@ function useColumns() {
     if (!el) return
     obs.current = new ResizeObserver(([entry]) => {
       const w = entry.contentRect.width
+      setWidth(w)
       setCols(w < 480 ? 2 : w < 768 ? 3 : w < 1100 ? 4 : w < 1400 ? 5 : 6)
     })
     obs.current.observe(el)
     ref.current = el
   }, [])
 
-  return { cols, ref: measure }
+  return { cols, width, ref: measure }
 }
 
 function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, selected }: {
@@ -351,7 +353,14 @@ export default function Library() {
   const [selectMode, setSelectMode] = useState(false)
   const anchorRef = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { cols, ref: containerRef } = useColumns()
+  const { cols, width: gridWidth, ref: containerRef } = useColumns()
+  // Estimate the height of a single grid row from the container width so the
+  // virtualizer's scrollToIndex math is close to reality. Card width =
+  // gridWidth / cols; height = width * CARD_ASPECT + ~60px for the meta
+  // strip + gap. A bad estimate compounds as the user scrolls deeper.
+  const rowHeight = gridWidth > 0
+    ? Math.round((gridWidth / cols) * CARD_ASPECT + 60)
+    : 320
 
   const { data, isLoading } = useQuery({
     queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly],
@@ -509,8 +518,27 @@ export default function Library() {
     if (!inCollection && sort === 'position') setSort('series')
   }, [inCollection, sort, setSort])
 
-  // Save scroll position as the user scrolls so opening a comic and
-  // pressing Back returns to exactly where they left off. RAF-throttled.
+  const selectedComics = comics.filter((c) => selectedIds.has(c.id))
+  const selectedCollections = collections.filter((c) => selectedCollectionIds.has(c.id))
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 3,
+  })
+
+  // Recompute virtualizer positions when the row-height estimate changes
+  // (window resize, column count change). Otherwise scrollToIndex on
+  // restore would use a stale estimate.
+  useEffect(() => {
+    virtualizer.measure()
+  }, [rowHeight, virtualizer])
+
+  // Save scroll position as the user scrolls. We persist the comic index of
+  // the topmost visible card (not a pixel offset) so it survives both
+  // virtualizer estimateSize errors and column-count changes between
+  // sessions. RAF-throttled to avoid thrashing on momentum scrolling.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -519,7 +547,14 @@ export default function Library() {
       if (frame) return
       frame = requestAnimationFrame(() => {
         frame = 0
-        setLibraryScroll(el.scrollTop)
+        const items = virtualizer.getVirtualItems()
+        if (items.length === 0) return
+        // First virtual item whose bottom is past the viewport top is the
+        // topmost visible row.
+        const top = el.scrollTop
+        const row = items.find((it) => it.end > top) ?? items[0]
+        const comicIndex = row.index * cols
+        setLibraryScroll(comicIndex)
       })
     }
     el.addEventListener('scroll', onScroll, { passive: true })
@@ -527,44 +562,33 @@ export default function Library() {
       el.removeEventListener('scroll', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [virtualizer, cols, setLibraryScroll])
 
-  // Restore scroll position. On mount the comics array is empty and the
-  // virtualizer's total height is 0, so a naive scrollTop assignment gets
-  // clamped to 0 (visible bug for users returning from a comic). Wait for
-  // both the data and the column count to settle, then assign once.
+  // Restore scroll position via the virtualizer's scrollToIndex, which
+  // handles the estimateSize-vs-actual-size mismatch correctly (and lets
+  // us survive a column-count change between save and restore). We wait
+  // until comics + cols are settled and run on a double rAF so the
+  // virtualizer has at least one paint to set up its row positions.
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
     if (scrollRestoredRef.current) return
-    const el = scrollRef.current
-    if (!el || !data) return
-    const target = library.scrollTop
-    if (target <= 0 || comics.length === 0 || cols <= 0) {
-      // Nothing to do (or not ready yet — try again on next deps change).
-      if (target <= 0) scrollRestoredRef.current = true
+    if (!data) return
+    const targetComic = library.scrollComic
+    if (targetComic <= 0 || comics.length === 0 || cols <= 0) {
+      if (targetComic <= 0) scrollRestoredRef.current = true
       return
     }
-    // Use a double rAF so the virtualizer has had at least one paint to set
-    // the inner container's height before we scroll into it.
+    const targetRow = Math.min(
+      Math.floor(targetComic / cols),
+      Math.max(0, Math.ceil(comics.length / cols) - 1),
+    )
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const el2 = scrollRef.current
-        if (el2) el2.scrollTop = target
+        virtualizer.scrollToIndex(targetRow, { align: 'start' })
         scrollRestoredRef.current = true
       })
     })
-  }, [data, comics.length, cols, library.scrollTop])
-
-  const selectedComics = comics.filter((c) => selectedIds.has(c.id))
-  const selectedCollections = collections.filter((c) => selectedCollectionIds.has(c.id))
-
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 280,
-    overscan: 3,
-  })
+  }, [data, comics.length, cols, library.scrollComic, virtualizer])
 
   async function handleLogout() {
     await api.logout().catch(() => {})

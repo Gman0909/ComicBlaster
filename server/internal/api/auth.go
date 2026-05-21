@@ -39,10 +39,9 @@ func (s *server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.setTokenCookie(w, id, "admin")
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"id": id, "username": body.Username, "role": "admin",
-	})
+	resp := map[string]any{"id": id, "username": body.Username, "role": "admin"}
+	s.attachToken(w, r, id, "admin", resp)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -61,10 +60,9 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.setTokenCookie(w, user.ID, user.Role)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": user.ID, "username": user.Username, "role": user.Role,
-	})
+	resp := map[string]any{"id": user.ID, "username": user.Username, "role": user.Role}
+	s.attachToken(w, r, user.ID, user.Role, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +120,16 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) setTokenCookie(w http.ResponseWriter, userID int64, role string) {
+// attachToken always issues a fresh JWT and sets the httpOnly cookie used
+// by the browser client. When the caller asks for it (X-Want-Token: 1 or
+// ?token=1 — used by native clients that can't read cookies because
+// they're served from a non-HTTP origin), the same token is added to the
+// response body under "token" so the client can stash it in the OS
+// keyring and replay it via Authorization: Bearer.
+//
+// The cookie path is harmless for native clients (they ignore it) and
+// preserves the browser flow exactly.
+func (s *server) attachToken(w http.ResponseWriter, r *http.Request, userID int64, role string, resp map[string]any) {
 	token, err := auth.IssueToken(userID, role)
 	if err != nil {
 		return
@@ -135,4 +142,7 @@ func (s *server) setTokenCookie(w http.ResponseWriter, userID int64, role string
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	if r.Header.Get("X-Want-Token") == "1" || r.URL.Query().Get("token") == "1" {
+		resp["token"] = token
+	}
 }

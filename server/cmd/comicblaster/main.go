@@ -16,6 +16,7 @@ import (
 	"comicblaster/internal/api"
 	"comicblaster/internal/auth"
 	"comicblaster/internal/config"
+	"comicblaster/internal/discovery"
 	"comicblaster/internal/scanner"
 	"comicblaster/internal/storage"
 
@@ -135,6 +136,18 @@ func main() {
 	addr := fmt.Sprintf(":%d", cfg.Server.HTTPPort)
 	httpSrv := &http.Server{Addr: addr, Handler: srv}
 
+	// Publish on the LAN via mDNS so native clients can auto-discover the
+	// server. Best-effort — failure to advertise (no multicast support,
+	// network restrictions) logs and continues; the HTTP server still
+	// starts and remote/manual entry still works.
+	mdns := discovery.Start(
+		cfg.Server.MDNSEnabled(),
+		cfg.Server.AdvertiseName,
+		cfg.Server.HTTPPort,
+		Version,
+	)
+	defer mdns.Stop()
+
 	go func() {
 		log.Printf("ComicBlaster listening on http://0.0.0.0%s", addr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -147,6 +160,7 @@ func main() {
 	<-quit
 
 	log.Println("shutting down...")
+	mdns.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(ctx); err != nil {

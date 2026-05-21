@@ -19,6 +19,27 @@ type Config struct {
 type ServerConfig struct {
 	HTTPPort int    `yaml:"http_port"`
 	WebRoot  string `yaml:"web_root"`
+	// AdvertiseMDNS controls whether the server publishes itself on the
+	// local network via mDNS / Bonjour as _comicblaster._tcp. Native
+	// clients use this for auto-discovery on LANs. Defaults to true so
+	// new installs get discovery without reading docs first; set to
+	// false in config.yaml if you don't want the server to be visible
+	// to mDNS browsers (privacy-sensitive networks).
+	AdvertiseMDNS *bool `yaml:"advertise_mdns,omitempty"`
+	// AdvertiseName is the human-readable name the server publishes in
+	// the mDNS TXT record + /api/discover endpoint. Defaults to the
+	// machine's hostname when empty.
+	AdvertiseName string `yaml:"advertise_name,omitempty"`
+}
+
+// MDNSEnabled returns the effective advertise_mdns setting. Pointer-bool
+// is used so an absent key falls through to the on-by-default behaviour
+// without false-being-the-yaml-zero-value tripping us up.
+func (s ServerConfig) MDNSEnabled() bool {
+	if s.AdvertiseMDNS == nil {
+		return true
+	}
+	return *s.AdvertiseMDNS
 }
 
 type LibraryConfig struct {

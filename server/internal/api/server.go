@@ -53,6 +53,13 @@ func (s *server) routes() http.Handler {
 		r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"version": version})
 		})
+		// Public discovery probe. Native clients hit this once they have
+		// a candidate host:port (from mDNS, UDP broadcast, Tailscale peer
+		// list, or manual entry) to confirm "this is actually a
+		// ComicBlaster server" and learn its friendly name + version
+		// before showing it in the picker. Intentionally unauthenticated
+		// — leaking the name + version is the cost of being discoverable.
+		r.Get("/discover", s.handleDiscover)
 
 		// Authenticated
 		r.Group(func(r chi.Router) {
@@ -105,6 +112,12 @@ func (s *server) routes() http.Handler {
 				r.Get("/admin/library/ignored", s.handleListIgnoredPaths)
 				r.Post("/admin/library/unignore", s.handleUnignorePath)
 				r.Delete("/admin/comics/{id}", s.handleRemoveComic)
+				// Trigger a service restart. Native clients with an
+				// authenticated admin session expose this in the
+				// Connection panel. Relies on the service manager
+				// (systemd / Windows Scheduled Task) bringing the
+				// process back up.
+				r.Post("/admin/restart", s.handleAdminRestart)
 			})
 		})
 	})
@@ -133,7 +146,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -143,14 +156,31 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requireAuth accepts either of two credential carriers:
+//
+//   - Authorization: Bearer <jwt> — used by native clients (Wails). Their
+//     UI is served from a non-HTTP origin (wails://, app://, file://) so
+//     browser cookies don't work; storing the JWT in the OS keyring and
+//     attaching it to every request as a Bearer header is the
+//     idiomatic alternative.
+//   - cb_token cookie — used by the browser client (httpOnly, SameSite=Lax).
+//
+// Bearer wins when both are present so a misconfigured client failing
+// over to the browser path is impossible to construct. Either path
+// produces the same claims object downstream.
 func (s *server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("cb_token")
-		if err != nil {
+		tokenStr := bearerToken(r)
+		if tokenStr == "" {
+			if cookie, err := r.Cookie("cb_token"); err == nil {
+				tokenStr = cookie.Value
+			}
+		}
+		if tokenStr == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		claims, err := auth.ParseToken(cookie.Value)
+		claims, err := auth.ParseToken(tokenStr)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
@@ -158,6 +188,18 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// bearerToken extracts the JWT from an `Authorization: Bearer <token>`
+// header. Returns "" if absent or malformed; the auth middleware then
+// falls through to the cookie path.
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
+		return strings.TrimSpace(h[len(prefix):])
+	}
+	return ""
 }
 
 func (s *server) requireAdmin(next http.Handler) http.Handler {

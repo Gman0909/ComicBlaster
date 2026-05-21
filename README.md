@@ -72,6 +72,51 @@ logon plus a daily auto-update task.
 Requires: [Go](https://go.dev/dl/), [Node.js LTS](https://nodejs.org/),
 and [Git](https://git-scm.com/) on PATH.
 
+## First run
+
+When you open ComicBlaster for the first time, the sign-in page detects
+that no users exist and automatically switches to setup mode (the heading
+reads *"Create your admin account to get started"*).
+
+1. Fill in a username, an optional email, and a password.
+2. Click **Create account**.
+
+The first user you create is the admin. You'll be signed in immediately
+and dropped on the (empty) library. To start using it:
+
+1. Open the **profile menu** in the top-right and click **Settings**.
+2. Under **Library paths**, click **Add path** and point it at the folder
+   on the server that holds your comics (a local directory, an SMB / NFS
+   mount, whatever). You can add as many paths as you like.
+3. Open the profile menu again and click **Rescan library** — or wait;
+   the scanner also runs every 5 minutes (`scan_interval` in
+   `config.yaml`).
+
+Subsequent visits show a normal sign-in form. The first user's
+credentials are stored in the SQLite database under your data
+directory — there's no separate config file for them.
+
+### Creating additional users
+
+Only admins see the user-management area.
+
+1. Open **Settings** from the profile menu (top-right).
+2. Scroll to the **Users** section near the bottom.
+3. Click **Add user**.
+4. Fill in username, optional email, and password, then pick **User** or
+   **Admin** from the role dropdown.
+5. Click **Create**.
+
+Regular users get their own per-user reading progress, labels, and
+collections, but they share the same library of comics. Admins
+additionally see Library paths, Ignored items, and the Users list.
+
+To reset a user's password, click **Reset pw** next to their name in the
+Users list. To remove a user, click the trash icon (you can't delete
+yourself — sign in as another admin first). Deleting a user removes
+their progress, labels, and collections; the comics themselves are
+untouched.
+
 ## Configuration
 
 `~/comicblaster-data/config.yaml` (or `%USERPROFILE%\comicblaster-data\config.yaml`)

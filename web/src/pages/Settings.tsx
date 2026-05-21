@@ -9,7 +9,7 @@ import { useScan } from '../hooks/useScan'
 // ── shared input style ──────────────────────────────────────────────────────
 const inp = 'w-full rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 py-2.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors'
 const btn = 'rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
-const btnPrimary = `${btn} bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white`
+const btnPrimary = `${btn} bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] text-white`
 const btnGhost   = `${btn} bg-[var(--color-surface-raised)] hover:bg-[var(--color-surface-overlay)] text-[var(--color-text)]`
 
 // ── Password section ─────────────────────────────────────────────────────────
@@ -110,9 +110,13 @@ function UserRow({ user, self, onDelete, onResetPw }: {
         className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors px-2 py-1 rounded hover:bg-[var(--color-surface-overlay)]">
         Reset pw
       </button>
-      <button onClick={() => onDelete(user)} disabled={user.id === self.id}
-        className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-red-400 disabled:opacity-30 transition-colors hover:bg-[var(--color-surface-overlay)]">
-        <Trash2 size={14} />
+      <button
+        onClick={() => onDelete(user)}
+        disabled={user.id === self.id}
+        title={user.id === self.id ? "Can't delete yourself" : `Delete ${user.username}`}
+        aria-label={user.id === self.id ? "Can't delete yourself" : `Delete user ${user.username}`}
+        className="p-1.5 rounded text-[var(--color-text-muted)] hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-30 transition-colors hover:bg-[var(--color-surface-overlay)]">
+        <Trash2 size={14} aria-hidden />
       </button>
     </div>
   )
@@ -676,7 +680,7 @@ function AboutSection() {
           href="https://github.com/Gman0909/ComicBlaster"
           target="_blank"
           rel="noreferrer"
-          className="text-[var(--color-accent)] hover:underline"
+          className="text-[var(--color-accent)] underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] rounded"
         >
           source
         </a>

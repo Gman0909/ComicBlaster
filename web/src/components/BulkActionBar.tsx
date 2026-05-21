@@ -331,7 +331,7 @@ export default function BulkActionBar({ selected, selectedCollections = [], canH
               <button
                 onClick={bulkHide}
                 disabled={busy}
-                className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-opacity disabled:opacity-50 ${hideDeleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent)] hover:opacity-90'}`}
+                className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${hideDeleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]'}`}
               >
                 {busy
                   ? 'Working…'
@@ -401,7 +401,7 @@ function CreateRow({ placeholder, value, onChange, onSubmit, disabled, icon }: {
         onClick={onSubmit}
         disabled={!canSubmit}
         aria-label="Create and apply"
-        className="shrink-0 p-2 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity"
+        className="shrink-0 p-2 rounded-md bg-[var(--color-accent-strong)] text-white hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         <Plus size={14} />
       </button>

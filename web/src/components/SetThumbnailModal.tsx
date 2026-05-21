@@ -155,7 +155,7 @@ export default function SetThumbnailModal({ comic, initialPage = 1, onClose }: P
           <button
             onClick={handleSet}
             disabled={saving || (isPdf && !pdfReady)}
-            className="flex-1 rounded-lg bg-[var(--color-accent)] text-white py-2 text-xs font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+            className="flex-1 rounded-lg bg-[var(--color-accent-strong)] text-white py-2 text-xs font-medium disabled:opacity-50 hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors"
           >
             {saving
               ? 'Saving…'

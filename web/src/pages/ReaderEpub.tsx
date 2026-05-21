@@ -253,15 +253,15 @@ export default function ReaderEpub() {
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className={`fixed top-0 left-0 right-0 z-20 flex items-center gap-3 px-4 py-3 bg-gradient-to-b ${overlayBg} to-transparent pointer-events-none`}
+            className={`fixed top-0 left-0 right-0 z-20 flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 bg-gradient-to-b ${overlayBg} to-transparent pointer-events-none`}
           >
             <button
               onClick={goBack}
-              className={`flex items-center gap-1.5 ${overlayText} opacity-80 hover:opacity-100 transition-opacity text-sm pointer-events-auto`}
+              className={`flex items-center gap-2 ${overlayText} hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-md px-1 py-1 transition-opacity text-base font-medium pointer-events-auto`}
             >
-              <ArrowLeft size={16} /> Back
+              <ArrowLeft size={22} aria-hidden /> Back
             </button>
-            <span className={`${overlayText} opacity-60 text-sm truncate flex-1`}>{comic.title}</span>
+            <span className={`${overlayText} opacity-85 text-base font-medium truncate flex-1`}>{comic.title}</span>
 
             {/* Labels */}
             <div className="relative pointer-events-auto">
@@ -269,9 +269,9 @@ export default function ReaderEpub() {
                 onClick={() => { setLabelsOpen(o => !o); setCollectionsOpen(false); setSettingsOpen(false) }}
                 title="Assign labels"
                 aria-label="Assign labels"
-                className={`p-2.5 -m-1.5 rounded-full transition-opacity ${labelIDs.size > 0 ? 'text-[var(--color-accent)]' : `${overlayText} opacity-60 hover:opacity-100`} hover:bg-white/10`}
+                className={`p-3 rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${labelIDs.size > 0 ? 'text-[var(--color-accent)]' : `${overlayText} opacity-85 hover:opacity-100`} hover:bg-white/15`}
               >
-                <Tag size={16} />
+                <Tag size={22} aria-hidden />
               </button>
               {labelsOpen && <PopoverList
                 items={allLabels.map(l => ({ id: l.id, name: l.name, color: l.color, on: labelIDs.has(l.id) }))}
@@ -287,9 +287,9 @@ export default function ReaderEpub() {
                 onClick={() => { setCollectionsOpen(o => !o); setLabelsOpen(false); setSettingsOpen(false) }}
                 title="Add to collection"
                 aria-label="Add to collection"
-                className={`p-2.5 -m-1.5 rounded-full transition-opacity ${collectionIDs.size > 0 ? 'text-[var(--color-accent)]' : `${overlayText} opacity-60 hover:opacity-100`} hover:bg-white/10`}
+                className={`p-3 rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${collectionIDs.size > 0 ? 'text-[var(--color-accent)]' : `${overlayText} opacity-85 hover:opacity-100`} hover:bg-white/15`}
               >
-                <Bookmark size={16} />
+                <Bookmark size={22} aria-hidden />
               </button>
               {collectionsOpen && <PopoverList
                 items={allCollections.map(c => ({ id: c.id, name: c.name, on: collectionIDs.has(c.id) }))}
@@ -305,9 +305,9 @@ export default function ReaderEpub() {
                 onClick={() => { setSettingsOpen(o => !o); setLabelsOpen(false); setCollectionsOpen(false) }}
                 title="Reading settings"
                 aria-label="Reading settings"
-                className={`p-2.5 -m-1.5 rounded-full transition-opacity ${overlayText} opacity-60 hover:opacity-100 hover:bg-white/10`}
+                className={`p-3 rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${overlayText} opacity-85 hover:opacity-100 hover:bg-white/15`}
               >
-                <Type size={16} />
+                <Type size={22} aria-hidden />
               </button>
               {settingsOpen && (
                 <>
@@ -354,9 +354,9 @@ export default function ReaderEpub() {
               onClick={toggleFullscreen}
               title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-              className={`p-2.5 -m-1.5 rounded-full transition-opacity pointer-events-auto ${overlayText} opacity-60 hover:opacity-100 hover:bg-white/10`}
+              className={`p-3 rounded-full transition-opacity pointer-events-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${overlayText} opacity-85 hover:opacity-100 hover:bg-white/15`}
             >
-              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              {isFullscreen ? <Minimize size={22} aria-hidden /> : <Maximize size={22} aria-hidden />}
             </button>
           </motion.div>
         )}
@@ -393,22 +393,31 @@ export default function ReaderEpub() {
             <div className="flex items-center gap-3 max-w-lg mx-auto pointer-events-auto">
               <button
                 onClick={prev}
-                aria-label="Previous"
-                className={`p-3 rounded-full ${overlayText} opacity-70 hover:opacity-100 hover:bg-white/10 transition-opacity`}
+                aria-label="Previous page"
+                title="Previous page"
+                className={`p-3 rounded-full ${overlayText} opacity-85 hover:opacity-100 hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 transition-opacity`}
               >
-                <ChevronLeft size={20} />
+                <ChevronLeft size={22} aria-hidden />
               </button>
-              <div className={`flex-1 h-0.5 rounded-full ${isDark ? 'bg-white/15' : 'bg-black/15'}`}>
+              <div
+                className={`flex-1 h-0.5 rounded-full ${isDark ? 'bg-white/15' : 'bg-black/15'}`}
+                role="progressbar"
+                aria-label="Reading progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pct}
+              >
                 <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
               </div>
               <button
                 onClick={next}
-                aria-label="Next"
-                className={`p-3 rounded-full ${overlayText} opacity-70 hover:opacity-100 hover:bg-white/10 transition-opacity`}
+                aria-label="Next page"
+                title="Next page"
+                className={`p-3 rounded-full ${overlayText} opacity-85 hover:opacity-100 hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 transition-opacity`}
               >
-                <ChevronRight size={20} />
+                <ChevronRight size={22} aria-hidden />
               </button>
-              <span className={`${overlayText} opacity-50 text-xs tabular-nums w-10 text-right shrink-0`}>
+              <span className={`${overlayText} opacity-85 text-sm tabular-nums w-10 text-right shrink-0`} aria-live="polite">
                 {pct}%
               </span>
             </div>

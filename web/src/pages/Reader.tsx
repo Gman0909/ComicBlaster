@@ -487,23 +487,23 @@ export default function Reader() {
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="fixed top-0 left-0 right-0 z-20 flex items-center gap-3 px-4 py-3 bg-gradient-to-b from-black/80 to-transparent pointer-events-none"
+            className="fixed top-0 left-0 right-0 z-20 flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 bg-gradient-to-b from-black/85 to-transparent pointer-events-none"
           >
             <button
               onClick={goBack}
-              className="flex items-center gap-1.5 text-white/80 hover:text-white transition-colors text-sm pointer-events-auto"
+              className="flex items-center gap-2 text-white hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-md px-1 py-1 transition-colors text-base font-medium pointer-events-auto"
             >
-              <ArrowLeft size={16} /> Back
+              <ArrowLeft size={22} aria-hidden /> Back
             </button>
-            <span className="text-white/50 text-sm truncate flex-1">{comic.title}</span>
+            <span className="text-white/85 text-base font-medium truncate flex-1">{comic.title}</span>
             <div className="relative pointer-events-auto">
               <button
                 onClick={() => { setLabelsOpen(o => !o); setCollectionsOpen(false) }}
                 title="Assign labels"
                 aria-label="Assign labels"
-                className={`p-2.5 -m-1.5 rounded-full transition-colors ${labelIDs.size > 0 ? 'text-[var(--color-accent)]' : 'text-white/60 hover:text-white'} hover:bg-white/10`}
+                className={`p-3 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${labelIDs.size > 0 ? 'text-[var(--color-accent)]' : 'text-white/85 hover:text-white'} hover:bg-white/15`}
               >
-                <Tag size={16} />
+                <Tag size={22} aria-hidden />
               </button>
               {labelsOpen && (
                 <>
@@ -539,9 +539,9 @@ export default function Reader() {
                 onClick={() => { setCollectionsOpen(o => !o); setLabelsOpen(false) }}
                 title="Add to collection"
                 aria-label="Add to collection"
-                className={`p-2.5 -m-1.5 rounded-full transition-colors ${collectionIDs.size > 0 ? 'text-[var(--color-accent)]' : 'text-white/60 hover:text-white'} hover:bg-white/10`}
+                className={`p-3 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${collectionIDs.size > 0 ? 'text-[var(--color-accent)]' : 'text-white/85 hover:text-white'} hover:bg-white/15`}
               >
-                <Bookmark size={16} />
+                <Bookmark size={22} aria-hidden />
               </button>
               {collectionsOpen && (
                 <>
@@ -573,17 +573,17 @@ export default function Reader() {
               onClick={() => setThumbnailOpen(true)}
               title="Set thumbnail"
               aria-label="Set thumbnail"
-              className={`p-2.5 -m-1.5 rounded-full transition-colors pointer-events-auto ${comic.custom_cover ? 'text-[var(--color-accent)]' : 'text-white/60 hover:text-white'} hover:bg-white/10`}
+              className={`p-3 rounded-full transition-colors pointer-events-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${comic.custom_cover ? 'text-[var(--color-accent)]' : 'text-white/85 hover:text-white'} hover:bg-white/15`}
             >
-              <Image size={16} />
+              <Image size={22} aria-hidden />
             </button>
             <button
               onClick={toggleFullscreen}
               title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-              className="p-2.5 -m-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors pointer-events-auto"
+              className="p-3 rounded-full text-white/85 hover:text-white hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 transition-colors pointer-events-auto"
             >
-              {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              {isFullscreen ? <Minimize size={22} aria-hidden /> : <Maximize size={22} aria-hidden />}
             </button>
           </motion.div>
         )}
@@ -660,27 +660,35 @@ export default function Reader() {
               <button
                 onClick={() => goTo(page - 1)}
                 disabled={page <= 1}
-                className="p-3 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors"
+                aria-label="Previous page"
+                title="Previous page"
+                className="p-3 rounded-full text-white/85 hover:text-white hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-40 transition-colors"
               >
-                <ChevronLeft size={20} />
+                <ChevronLeft size={22} aria-hidden />
               </button>
 
               <input
                 ref={sliderRef}
                 type="range" min={1} max={totalPages} value={scrubPage}
+                aria-label={`Page slider, currently page ${scrubPage} of ${totalPages}`}
+                aria-valuemin={1}
+                aria-valuemax={totalPages}
+                aria-valuenow={scrubPage}
                 onChange={(e) => handleScrub(Number(e.target.value))}
-                className="flex-1 accent-[var(--color-accent)]"
+                className="flex-1 accent-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded"
               />
 
               <button
                 onClick={() => goTo(page + 1)}
                 disabled={page >= totalPages}
-                className="p-3 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors"
+                aria-label="Next page"
+                title="Next page"
+                className="p-3 rounded-full text-white/85 hover:text-white hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-40 transition-colors"
               >
-                <ChevronRight size={20} />
+                <ChevronRight size={22} aria-hidden />
               </button>
 
-              <span className="text-white/50 text-xs tabular-nums w-16 text-right shrink-0">
+              <span className="text-white/85 text-sm tabular-nums w-16 text-right shrink-0" aria-live="polite">
                 {scrubPage} / {totalPages}
               </span>
             </div>

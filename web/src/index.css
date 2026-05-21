@@ -4,11 +4,21 @@
   --color-surface:         oklch(0.13 0 0);
   --color-surface-raised:  oklch(0.18 0 0);
   --color-surface-overlay: oklch(0.23 0 0);
-  --color-border:          oklch(0.28 0 0);
-  --color-text:            oklch(0.95 0 0);
-  --color-text-muted:      oklch(0.55 0 0);
-  --color-accent:          oklch(0.65 0.2 265);
-  --color-accent-hover:    oklch(0.72 0.2 265);
+  --color-border:          oklch(0.32 0 0);
+  --color-text:            oklch(0.97 0 0);
+  /* Muted text bumped from 0.55 to 0.72 so it clears 4.5:1 even against
+     the lightest surface (--color-surface-overlay, L≈0.23). axe was
+     flagging the previous value on raised + overlay backgrounds. */
+  --color-text-muted:      oklch(0.72 0 0);
+  /* Two accent variants:
+       --color-accent  — the vibrant signature blue, used for borders,
+                          focus rings, accent-text on dark surfaces.
+       --color-accent-strong — a darker shade used as a *background* with
+                          white text on top (filter chips, primary buttons)
+                          so the foreground clears AA contrast (≥4.5:1). */
+  --color-accent:          oklch(0.70 0.18 265);
+  --color-accent-strong:   oklch(0.48 0.18 265);
+  --color-accent-hover:    oklch(0.55 0.18 265);
 }
 
 :root { color-scheme: dark; }
@@ -18,11 +28,13 @@
   --color-surface:         oklch(0.97 0 0);
   --color-surface-raised:  oklch(0.93 0 0);
   --color-surface-overlay: oklch(0.88 0 0);
-  --color-border:          oklch(0.80 0 0);
-  --color-text:            oklch(0.15 0 0);
-  --color-text-muted:      oklch(0.45 0 0);
-  --color-accent:          oklch(0.50 0.2 265);
-  --color-accent-hover:    oklch(0.44 0.2 265);
+  --color-border:          oklch(0.72 0 0);
+  --color-text:            oklch(0.13 0 0);
+  /* Light-mode muted bumped from 0.45 to 0.38 for the same AA reason. */
+  --color-text-muted:      oklch(0.38 0 0);
+  --color-accent:          oklch(0.42 0.2 265);
+  --color-accent-strong:   oklch(0.38 0.2 265);
+  --color-accent-hover:    oklch(0.34 0.2 265);
 }
 
 *, *::before, *::after { box-sizing: border-box; }

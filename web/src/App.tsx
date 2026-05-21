@@ -45,7 +45,7 @@ function ReaderDispatch() {
           <div className="flex justify-center gap-2 pt-2">
             <button
               onClick={() => refetch()}
-              className="px-4 py-2 rounded-md bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+              className="px-4 py-2 rounded-md bg-[var(--color-accent-strong)] text-white text-sm font-medium hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors"
             >
               Retry
             </button>

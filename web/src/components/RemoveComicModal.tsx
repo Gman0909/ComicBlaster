@@ -80,7 +80,7 @@ export default function RemoveComicModal({ comic, onClose }: Props) {
           <button
             onClick={confirm}
             disabled={working}
-            className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-opacity disabled:opacity-50 ${deleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent)] hover:opacity-90'}`}
+            className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${deleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]'}`}
           >
             {working ? 'Removing…' : deleteFile ? 'Delete forever' : 'Hide'}
           </button>

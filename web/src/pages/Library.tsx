@@ -47,100 +47,124 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
     ? Math.round((comic.progress.last_page / comic.page_count) * 100)
     : 0
 
+  // The card is structured as a <motion.div> container so its action
+  // buttons (set thumbnail, remove) can live as siblings of the main click
+  // target. Previously the outer was a <button> with nested action <button>s,
+  // which axe flags as nested-interactive (and is invalid HTML — buttons
+  // can't contain other buttons). Now the cover + meta live inside the
+  // primary button; the action buttons sit above it via z-10.
   return (
-    <motion.button
-      onClick={onClick}
+    <motion.div
       data-comic-id={comic.id}
-      className={`group relative flex flex-col text-left rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+      className={`group relative rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow ${
         selected
           ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
-          : 'hover:ring-2 hover:ring-[var(--color-accent)]'
+          : 'hover:ring-2 hover:ring-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent)]'
       }`}
       whileHover={{ y: -2 }}
       transition={{ duration: 0.15 }}
     >
-      {/* Cover */}
-      <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
-        <img
-          src={comic.cover_url}
-          alt={comic.title}
-          loading="lazy"
-          className={`absolute inset-0 w-full h-full object-cover transition-all ${pct === 100 ? 'brightness-[0.65] saturate-50' : ''}`}
-          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
-        />
-        {/* Format badge for types without cover art */}
-        {comic.format === 'pdf' && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[var(--color-text-muted)] text-xs font-bold tracking-widest uppercase opacity-40">PDF</span>
-          </div>
-        )}
-        {pct > 0 && pct < 100 && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
-            <div className="h-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
-          </div>
-        )}
-        {pct === 100 && !selected && (
-          <>
-            <div className="absolute top-2 right-2 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500 text-white shadow-lg ring-2 ring-emerald-500/30">
-              <Check size={18} strokeWidth={3} />
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`Open ${comic.title}`}
+        className="block w-full text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      >
+        {/* Cover */}
+        <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
+          <img
+            src={comic.cover_url}
+            alt=""
+            loading="lazy"
+            className={`absolute inset-0 w-full h-full object-cover transition-all ${pct === 100 ? 'brightness-[0.65] saturate-50' : ''}`}
+            onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
+          />
+          {/* Format badge for types without cover art */}
+          {comic.format === 'pdf' && (
+            <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
+              <span className="text-[var(--color-text-muted)] text-xs font-bold tracking-widest uppercase opacity-40">PDF</span>
             </div>
-            <div className="absolute bottom-0 left-0 right-0 bg-emerald-500/85 text-white text-[11px] font-bold uppercase tracking-wider text-center py-1 shadow-md">
-              Read
+          )}
+          {pct > 0 && pct < 100 && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-1 bg-black/40"
+              role="progressbar"
+              aria-label={`Read ${pct}%`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pct}
+            >
+              <div className="h-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
             </div>
-          </>
-        )}
-        {selected && (
-          <div className="absolute inset-0 bg-[var(--color-accent)]/25 flex items-start justify-end p-2 pointer-events-none">
-            <div className="w-6 h-6 rounded-full bg-[var(--color-accent)] text-white flex items-center justify-center text-sm font-bold shadow-lg">
-              ✓
+          )}
+          {pct === 100 && !selected && (
+            <>
+              <div className="absolute top-2 right-2 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-500 text-white shadow-lg ring-2 ring-emerald-500/30" aria-hidden>
+                <Check size={18} strokeWidth={3} />
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wider text-center py-1 shadow-md">
+                Read
+              </div>
+            </>
+          )}
+          {selected && (
+            <div className="absolute inset-0 bg-[var(--color-accent)]/25 flex items-start justify-end p-2 pointer-events-none">
+              <div className="w-6 h-6 rounded-full bg-[var(--color-accent-strong)] text-white flex items-center justify-center text-sm font-bold shadow-lg" aria-hidden>
+                ✓
+              </div>
             </div>
-          </div>
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); onSetThumbnail() }}
-          title="Set thumbnail"
-          aria-label="Set thumbnail"
-          className="absolute top-2 left-2 p-2.5 rounded-md bg-black/60 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-90 hover:bg-black/80 transition-all"
-        >
-          <Image size={14} className={comic.custom_cover ? 'text-[var(--color-accent)]' : ''} />
-        </button>
-        {canRemove && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onRemove() }}
-            title="Remove from library"
-            aria-label="Remove from library"
-            className="absolute top-2 right-2 p-2.5 rounded-md bg-black/60 text-white opacity-0 group-hover:opacity-100 pointer-coarse:opacity-90 hover:bg-red-600 transition-all"
-          >
-            <Trash2 size={14} />
-          </button>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Meta */}
-      <div className="p-2 flex flex-col gap-0.5 min-w-0">
-        <p className="text-xs font-medium text-[var(--color-text)] truncate leading-tight">{comic.title}</p>
-        {comic.series && (
-          <p className="text-[11px] text-[var(--color-text-muted)] truncate">{comic.series}</p>
-        )}
-        {comic.labels.length > 0 && (
-          <div
-            className="flex gap-1 mt-1 flex-wrap"
-            title={comic.labels.map((l) => l.name).join(', ')}
-          >
-            {comic.labels.slice(0, 3).map((l) => (
-              <span
-                key={l.id}
-                className="inline-block w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: l.color }}
-              />
-            ))}
-            {comic.labels.length > 3 && (
-              <span className="text-[10px] text-[var(--color-text-muted)] leading-none">+{comic.labels.length - 3}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </motion.button>
+        {/* Meta */}
+        <div className="p-2 flex flex-col gap-0.5 min-w-0">
+          <p className="text-xs font-medium text-[var(--color-text)] truncate leading-tight">{comic.title}</p>
+          {comic.series && (
+            <p className="text-[11px] text-[var(--color-text-muted)] truncate">{comic.series}</p>
+          )}
+          {comic.labels.length > 0 && (
+            <div
+              className="flex gap-1 mt-1 flex-wrap"
+              title={comic.labels.map((l) => l.name).join(', ')}
+            >
+              {comic.labels.slice(0, 3).map((l) => (
+                <span
+                  key={l.id}
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: l.color }}
+                />
+              ))}
+              {comic.labels.length > 3 && (
+                <span className="text-[10px] text-[var(--color-text-muted)] leading-none">+{comic.labels.length - 3}</span>
+              )}
+            </div>
+          )}
+        </div>
+      </button>
+
+      {/* Action buttons — siblings of the click target so they don't nest
+          interactives. z-10 keeps them above the card button visually. */}
+      <button
+        type="button"
+        onClick={onSetThumbnail}
+        title="Set thumbnail"
+        aria-label={`Set thumbnail for ${comic.title}`}
+        className="absolute top-2 left-2 z-10 p-2.5 rounded-md bg-black/70 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-90 hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all"
+      >
+        <Image size={14} className={comic.custom_cover ? 'text-[var(--color-accent)]' : ''} aria-hidden />
+      </button>
+      {canRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove from library"
+          aria-label={`Remove ${comic.title} from library`}
+          className="absolute top-2 right-2 z-10 p-2.5 rounded-md bg-black/70 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-90 hover:bg-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all"
+        >
+          <Trash2 size={14} aria-hidden />
+        </button>
+      )}
+    </motion.div>
   )
 }
 
@@ -853,7 +877,7 @@ export default function Library() {
                 onClick={clearLibraryFilters}
                 className={`shrink-0 px-2.5 py-1 rounded-full text-xs transition-colors ${
                   labelFilters.length === 0 && collectionFilters.length === 0
-                    ? 'bg-[var(--color-accent)] text-white'
+                    ? 'bg-[var(--color-accent-strong)] text-white'
                     : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
                 }`}
               >
@@ -901,13 +925,13 @@ export default function Library() {
                   onClick={() => toggleCollectionFilter(c.id)}
                   className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors ${
                     active
-                      ? 'bg-[var(--color-accent)] text-white'
+                      ? 'bg-[var(--color-accent-strong)] text-white'
                       : 'bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
                   }`}
                 >
-                  <Bookmark size={10} className="shrink-0" />
+                  <Bookmark size={10} className="shrink-0" aria-hidden />
                   {c.name}
-                  <span className="opacity-60 tabular-nums">{c.comic_count ?? 0}</span>
+                  <span className="tabular-nums">{c.comic_count ?? 0}</span>
                 </button>
                 )
               })}

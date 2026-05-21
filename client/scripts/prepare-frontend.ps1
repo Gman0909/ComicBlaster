@@ -29,7 +29,7 @@ if ($ExitCode -ne 0) {
 }
 
 $Src = Join-Path $Web 'dist'
-$Dst = Join-Path $Root 'dist'
+$Dst = Join-Path $Root 'frontend\dist'
 
 Write-Host "[prepare-frontend] mirroring $Src -> $Dst"
 if (Test-Path $Dst) { Remove-Item -Recurse -Force $Dst }

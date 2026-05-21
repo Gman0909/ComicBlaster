@@ -297,8 +297,34 @@ export const api = {
 // wrapper) will load — <img src=>, <canvas src=>, pdf.js worker, epub.js
 // resource pulls. Per the comment above, this is where ?token= is appended
 // in bearer mode.
+//
+// Exported because some media URLs come from the SERVER as JSON fields
+// (e.g. comic.cover_url already includes a ?v=<mtime> cache-buster) and
+// the consumers — ComicCard <img>, etc. — need to project them through
+// the same rewrite. resolveServerMediaUrl below is the inbound path for
+// those cases; mediaUrl here is the outbound for client-built URLs.
 function mediaUrl(path: string): string {
   const url = apiUrl(path)
+  if (apiConfig.auth !== 'bearer') return url
+  const t = apiConfig.getToken()
+  if (!t) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(t)}`
+}
+
+// resolveServerMediaUrl rewrites a media URL that the SERVER constructed
+// (e.g. comic.cover_url = "/api/comics/12/cover?v=…") so it works in the
+// native client. In browser/cookie mode this is a no-op — the relative
+// path resolves to the same origin and the cookie authenticates it. In
+// bearer mode we prepend the discovered baseUrl and append ?token=.
+//
+// Idempotent: handing it an already-absolute http(s):// URL leaves it
+// alone (just the token append). Handing it an empty string returns
+// empty. Used by api.comics / api.comic just before returning data.
+export function resolveServerMediaUrl(u: string): string {
+  if (!u) return u
+  let url = u
+  if (!/^https?:\/\//i.test(url)) url = apiConfig.baseUrl + url
   if (apiConfig.auth !== 'bearer') return url
   const t = apiConfig.getToken()
   if (!t) return url

@@ -27,7 +27,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
-//go:embed all:dist
+//go:embed all:frontend/dist
 var assets embed.FS
 
 // Version is the human-readable build tag, set at compile time:
@@ -37,9 +37,9 @@ var Version = "dev"
 func main() {
 	app := NewApp(Version)
 
-	// Strip the embed root prefix ("dist/") so the asset server sees
-	// the React app at "/" rather than "/dist/".
-	rooted, err := fs.Sub(assets, "dist")
+	// Strip the embed root prefix so the asset server sees the React
+	// app at "/" rather than "/frontend/dist/".
+	rooted, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
 		log.Fatalf("embed: %v", err)
 	}

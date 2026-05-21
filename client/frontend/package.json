@@ -1,0 +1,10 @@
+{
+  "name": "comicblaster-client-frontend-shim",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Empty shim — the real React app lives in ../../web. Wails insists on a frontend/ directory at this path. scripts/prepare-frontend.ps1 builds web/ and mirrors its dist/ into frontend/dist/ here for embed.",
+  "scripts": {
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-frontend.ps1",
+    "install:web": "powershell -NoProfile -Command \"cd ../../web; npm install\""
+  }
+}

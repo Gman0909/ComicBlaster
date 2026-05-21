@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'framer-motion'
 import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, ArrowUpDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize } from 'lucide-react'
-import { api, type Comic, type Collection, type User } from '../api'
+import { api, resolveServerMediaUrl, type Comic, type Collection, type User } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { useFullscreen } from '../hooks/useFullscreen'
@@ -73,7 +73,7 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
         {/* Cover */}
         <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
           <img
-            src={comic.cover_url}
+            src={resolveServerMediaUrl(comic.cover_url)}
             alt=""
             loading="lazy"
             className={`absolute inset-0 w-full h-full object-cover transition-all ${pct === 100 ? 'brightness-[0.65] saturate-50' : ''}`}
@@ -383,7 +383,7 @@ function CollectionCard({ collection, onClick, unreadOnly, selected }: {
           </div>
         ) : previews.length === 1 ? (
           <img
-            src={`/api/comics/${previews[0]}/cover`}
+            src={api.coverUrl(previews[0])}
             alt=""
             loading="lazy"
             className="absolute inset-0 w-full h-full object-cover"
@@ -394,7 +394,7 @@ function CollectionCard({ collection, onClick, unreadOnly, selected }: {
             {previews.map((id) => (
               <img
                 key={id}
-                src={`/api/comics/${id}/cover`}
+                src={api.coverUrl(id)}
                 alt=""
                 loading="lazy"
                 className="w-full h-full object-cover"

@@ -1,0 +1,197 @@
+name: Release native client
+
+# Trigger on a tag push following `client-vX.Y.Z` (so server tags like
+# v0.x.y don't accidentally release a client), or manually from the
+# Actions UI with a version input. Manual runs build artifacts but
+# only attach them to a GitHub Release when triggered by a tag push —
+# this keeps "I want to sanity-check the build" cheap.
+on:
+  push:
+    tags:
+      - 'client-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string baked into the binary (e.g. client-v0.3.0). Manual runs do not create a GitHub Release; tag pushes do."
+        required: true
+        default: 'client-v0.0.0-dev'
+
+permissions:
+  contents: write  # softprops/action-gh-release needs this to publish
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+          - os: macos-latest
+            target: darwin-universal
+          - os: ubuntu-24.04
+            target: linux-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: client/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Webview-backend libs. Wails needs gtk + webkit2gtk to link the
+      # native side on Linux; macOS uses system WebKit; Windows uses
+      # WebView2 (already on every github runner image).
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # NSIS for the Windows installer. Pre-bundled in the chocolatey
+      # cache on every windows-latest runner, just needs the install
+      # invocation.
+      - name: Install NSIS
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: choco install nsis -y --no-progress --limitoutput
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ inputs.version }}"
+          else
+            VER="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Building $VER for ${{ matrix.target }}"
+
+      - name: Build (Windows — portable + NSIS installer)
+        if: matrix.os == 'windows-latest'
+        working-directory: client
+        shell: pwsh
+        run: |
+          wails build -nsis -clean -ldflags "-X main.Version=${{ steps.version.outputs.version }}"
+
+      - name: Build (macOS universal)
+        if: matrix.os == 'macos-latest'
+        working-directory: client
+        run: |
+          wails build -platform darwin/universal -clean -ldflags "-X main.Version=${{ steps.version.outputs.version }}"
+
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: client
+        run: |
+          wails build -platform linux/amd64 -clean -ldflags "-X main.Version=${{ steps.version.outputs.version }}"
+
+      # Package the macOS .app as a zip so it survives the artifact +
+      # release upload (.app is a directory, not a file). ditto with
+      # --sequesterRsrc preserves macOS resource forks + extended
+      # attributes that a vanilla zip would mangle.
+      - name: Package macOS .app
+        if: matrix.os == 'macos-latest'
+        working-directory: client/build/bin
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent ComicBlaster.app ComicBlaster-${{ steps.version.outputs.version }}-darwin-universal.zip
+
+      # Give the Linux binary a versioned, OS-tagged name so users can
+      # tell which build they downloaded from a Releases page that lists
+      # all three.
+      - name: Rename Linux binary
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: client/build/bin
+        run: |
+          mv ComicBlaster "ComicBlaster-${{ steps.version.outputs.version }}-linux-amd64"
+
+      - name: Rename Windows artifacts
+        if: matrix.os == 'windows-latest'
+        working-directory: client/build/bin
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          if (Test-Path "ComicBlaster.exe") {
+            Move-Item "ComicBlaster.exe" "ComicBlaster-$ver-windows-amd64.exe" -Force
+          }
+          # NSIS installer file. Wails names it
+          # ComicBlaster-amd64-installer.exe by default.
+          $nsis = Get-ChildItem -Filter "*installer*.exe" | Select-Object -First 1
+          if ($nsis) {
+            Move-Item $nsis.FullName "ComicBlaster-$ver-windows-amd64-setup.exe" -Force
+          }
+          Get-ChildItem | Format-Table Name,Length
+
+      - name: List build output
+        shell: bash
+        run: ls -la client/build/bin/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ComicBlaster-${{ matrix.target }}
+          path: |
+            client/build/bin/*-windows-amd64.exe
+            client/build/bin/*-windows-amd64-setup.exe
+            client/build/bin/*-darwin-universal.zip
+            client/build/bin/*-linux-amd64
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/client-v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten release directory
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          # Mark as pre-release when the tag has a semver suffix like
+          # client-v0.3.0-alpha.1 or -rc1. The simpler `contains(name, '-')`
+          # check fails because the tag prefix itself contains a hyphen.
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'pre') }}
+          body: |
+            Native ComicBlaster client for Windows, macOS, and Linux.
+
+            **Windows**
+            - `ComicBlaster-*-windows-amd64.exe` — portable, double-click to run, pin to taskbar.
+            - `ComicBlaster-*-windows-amd64-setup.exe` — NSIS installer, adds a Start Menu entry + uninstaller.
+            - Unsigned: SmartScreen will warn on first run. Click *More info → Run anyway*.
+
+            **macOS**
+            - `ComicBlaster-*-darwin-universal.zip` — universal binary, runs on both Apple Silicon and Intel.
+            - Unsigned: right-click → *Open* on first launch to bypass Gatekeeper, or run `xattr -dr com.apple.quarantine ComicBlaster.app` from Terminal.
+
+            **Linux**
+            - `ComicBlaster-*-linux-amd64` — raw binary, `chmod +x` and run.
+            - Needs `libwebkit2gtk-4.1` at runtime (Debian/Ubuntu 24.04+).

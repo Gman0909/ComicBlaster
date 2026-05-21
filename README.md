@@ -35,6 +35,30 @@ folder — no uploads required.
 - **Auto-update**: optional systemd timer / Windows scheduled task that
   pulls + rebuilds + restarts daily
 
+## Native client (Windows / macOS / Linux)
+
+If you already have a ComicBlaster server running on your network (or
+on a Tailnet), the native client gives you a real desktop app with
+auto-discovery, taskbar-pinnable launch, and the JWT stored in your
+OS keyring. It connects to the same server you'd use from a browser.
+
+Pre-built binaries from
+[GitHub Releases](https://github.com/Gman0909/ComicBlaster/releases?q=client):
+
+| OS | Download |
+|---|---|
+| **Windows** | `ComicBlaster-…-windows-amd64.exe` (portable) or `…-setup.exe` (NSIS installer, adds a Start Menu entry) |
+| **macOS** | `ComicBlaster-…-darwin-universal.zip` — universal, runs on Apple Silicon + Intel |
+| **Linux** | `ComicBlaster-…-linux-amd64` — `chmod +x` and run; needs `libwebkit2gtk-4.1` |
+
+Unsigned for now: Windows SmartScreen warns on first run (*More info →
+Run anyway*); macOS requires *right-click → Open* (or
+`xattr -dr com.apple.quarantine ComicBlaster.app`).
+
+On first launch the client browses the local network (mDNS) + your
+Tailnet (`tailscale` CLI) for ComicBlaster servers and lets you pick
+one — or paste a URL manually. The chosen server is remembered.
+
 ## Quick start
 
 ### Linux / Raspberry Pi OS

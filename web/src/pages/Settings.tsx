@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff } from 'lucide-react'
+import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Loader2, Power, RotateCw, Server } from 'lucide-react'
 import { api, type User, type Label, type Collection } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
+import { bridge, isNative, type ConnectionState } from '../native'
 
 // ── shared input style ──────────────────────────────────────────────────────
 const inp = 'w-full rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 py-2.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors'
@@ -663,6 +664,178 @@ function UsersSection({ self }: { self: User }) {
   )
 }
 
+// ── Connection section (native client only) ─────────────────────────────────
+//
+// Shows what server the user is connected to and offers the two actions
+// the original spec called out: Disconnect (forget this server entirely
+// and return to the picker) and Restart server (admin only; calls
+// POST /api/admin/restart and polls /api/discover until the server
+// comes back). Browser deployment never renders this — isNative() is
+// false there, so the section short-circuits in the Settings page.
+function ConnectionSection({ self }: { self: User }) {
+  const br = bridge()
+  const [conn, setConn]               = useState<ConnectionState | null>(null)
+  const [clientVersion, setClientVersion] = useState<string>('')
+  const [latency, setLatency]         = useState<number | null>(null)
+  const [refreshing, setRefreshing]   = useState(false)
+  const [restarting, setRestarting]   = useState(false)
+  const [error, setError]             = useState('')
+
+  // Load saved connection + client version on mount.
+  useEffect(() => {
+    if (!br) return
+    let cancelled = false
+    Promise.all([br.GetSavedConnection(), br.Version()])
+      .then(([s, v]) => {
+        if (cancelled) return
+        setConn(s)
+        setClientVersion(v)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [br])
+
+  // Re-probe the configured server to refresh version + latency. Used
+  // by the Refresh button + as the polling step during a restart so the
+  // panel reflects the new version once the server reappears.
+  async function refresh() {
+    if (!br || !conn) return
+    setRefreshing(true)
+    setError('')
+    try {
+      const info = await br.ProbeURL(conn.url)
+      setLatency(info.latency_ms)
+      setConn({ ...conn, name: info.name, version: info.version })
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Could not reach server')
+      setLatency(null)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  useEffect(() => { if (conn) refresh() }, [conn?.url]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function disconnect() {
+    if (!br) return
+    if (!confirm('Disconnect from this server? You will need to re-discover or re-enter the URL next launch.')) return
+    await br.ClearConnection()
+    // Reload so main.tsx's bootNative runs fresh and lands on the picker.
+    window.location.reload()
+  }
+
+  async function restartServer() {
+    if (!br || !conn) return
+    if (!confirm(`Restart ${conn.name || 'the server'}? The reading session may briefly drop.`)) return
+    setRestarting(true)
+    setError('')
+    try {
+      await br.RestartServer()
+      // The server exit(1)s after a 250ms grace, then systemd brings it
+      // back. Poll until /api/discover answers again, up to ~30s.
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500))
+        try {
+          const info = await br.ProbeURL(conn.url)
+          setLatency(info.latency_ms)
+          setConn({ ...conn, name: info.name, version: info.version })
+          setRestarting(false)
+          return
+        } catch { /* still down — keep polling */ }
+      }
+      setError('Server did not come back within 30 seconds. Check the service.')
+    } catch (e: unknown) {
+      setError((e as Error)?.message ?? 'Restart request failed')
+    } finally {
+      setRestarting(false)
+    }
+  }
+
+  if (!isNative()) return null
+  if (!conn) {
+    // Shouldn't happen — Settings is only reachable behind AuthGuard
+    // which itself only runs once a connection is configured — but be
+    // defensive.
+    return null
+  }
+
+  // Pick a small icon for the discovery source. We don't have the
+  // source recorded on the saved connection (it was discarded after
+  // commit), so default to a generic server glyph. Could be added in
+  // a follow-up if it turns out to be useful.
+  const sourceIcon = <Server size={16} aria-hidden />
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Connection</h2>
+      <div className="max-w-lg rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <span className="flex items-center justify-center w-10 h-10 rounded-md bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] shrink-0">
+            {sourceIcon}
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-[var(--color-text)] truncate">{conn.name || conn.url}</p>
+            <p className="text-xs text-[var(--color-text-muted)] truncate font-mono">{conn.url}</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              Server <span className="font-mono">{conn.version ?? '…'}</span>
+              <span className="mx-1">·</span>
+              Client <span className="font-mono">{clientVersion || '…'}</span>
+              {latency !== null && (
+                <>
+                  <span className="mx-1">·</span>
+                  {latency}ms
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-xs text-red-400" role="alert">{error}</p>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={refreshing || restarting}
+            className={`${btnGhost} flex items-center gap-2`}
+          >
+            {refreshing
+              ? <Loader2 size={14} className="animate-spin" aria-hidden />
+              : <RotateCw size={14} aria-hidden />
+            }
+            Refresh
+          </button>
+          {self.role === 'admin' && (
+            <button
+              type="button"
+              onClick={restartServer}
+              disabled={restarting}
+              className={`${btnGhost} flex items-center gap-2`}
+            >
+              {restarting
+                ? <><Loader2 size={14} className="animate-spin" aria-hidden /> Restarting…</>
+                : <><RotateCw size={14} aria-hidden /> Restart server</>
+              }
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={restarting}
+            className={`${btnGhost} flex items-center gap-2 text-red-400 hover:text-red-300`}
+          >
+            <Power size={14} aria-hidden />
+            Disconnect
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 // ── About section ───────────────────────────────────────────────────────────
 function AboutSection() {
   const { data } = useQuery({
@@ -716,6 +889,8 @@ export default function Settings() {
       </header>
 
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
+        {/* Connection — native client only; renders null in browser */}
+        <ConnectionSection self={user} />
         <PasswordSection />
         <ScanSection />
         <LabelsSection />

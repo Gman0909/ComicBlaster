@@ -36,6 +36,12 @@ interface AppState {
   toggleCollectionFilter: (id: number) => void
   clearLibraryFilters: () => void
   setLibraryScroll: (comicIndex: number) => void
+  // ID of the comic the user most recently opened from the library. Set on
+  // navigate-into-reader and consumed by the library on mount to guarantee
+  // that comic is scrolled into view on return — independent of where the
+  // viewport happened to be when the card was clicked.
+  lastOpenedComicId: number | null
+  setLastOpenedComicId: (id: number | null) => void
 }
 
 const defaultLibrary: LibraryUiState = {
@@ -87,6 +93,8 @@ export const useStore = create<AppState>()(
         set((s) => ({ library: { ...s.library, labelFilters: [], collectionFilters: [], scrollComic: 0 } })),
       setLibraryScroll: (scrollComic) =>
         set((s) => ({ library: { ...s.library, scrollComic } })),
+      lastOpenedComicId: null,
+      setLastOpenedComicId: (lastOpenedComicId) => set({ lastOpenedComicId }),
     }),
     {
       name: 'cb-store',
@@ -95,6 +103,7 @@ export const useStore = create<AppState>()(
         libraryView: s.libraryView,
         unreadOnly: s.unreadOnly,
         library: s.library,
+        lastOpenedComicId: s.lastOpenedComicId,
       }),
     },
   ),

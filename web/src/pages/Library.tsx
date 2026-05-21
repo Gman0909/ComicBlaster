@@ -328,6 +328,7 @@ export default function Library() {
     unreadOnly, setUnreadOnly,
     library, setLibrarySearch, setLibrarySort, setLibraryOrder,
     toggleLabelFilter, toggleCollectionFilter, clearLibraryFilters, setLibraryScroll,
+    lastOpenedComicId, setLastOpenedComicId,
   } = useStore()
   const isAdmin = user?.role === 'admin'
   const { status: scanStatus, trigger: triggerScan } = useScan(
@@ -445,8 +446,10 @@ export default function Library() {
       return
     }
     anchorRef.current = comic.id
+    // Mark so we can scroll back to this comic on return from the reader.
+    setLastOpenedComicId(comic.id)
     navigate(`/read/${comic.id}`)
-  }, [comics, selectedIds.size, selectMode, navigate])
+  }, [comics, selectedIds.size, selectMode, navigate, setLastOpenedComicId])
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set())
@@ -564,31 +567,58 @@ export default function Library() {
     }
   }, [virtualizer, cols, setLibraryScroll])
 
-  // Restore scroll position via the virtualizer's scrollToIndex, which
-  // handles the estimateSize-vs-actual-size mismatch correctly (and lets
-  // us survive a column-count change between save and restore). We wait
-  // until comics + cols are settled and run on a double rAF so the
-  // virtualizer has at least one paint to set up its row positions.
+  // Restore scroll position. Two strategies in priority order:
+  //
+  //   1. If the user just came back from a comic they opened from this
+  //      library, scroll to *that* specific comic (centered) — guarantees
+  //      it's visible regardless of where the viewport was at click time.
+  //      Consumed once and cleared so refreshing the page or navigating
+  //      elsewhere doesn't keep snapping back to it.
+  //
+  //   2. Otherwise (cold mount, e.g. arriving from Settings) fall back to
+  //      the topmost-visible comic recorded during prior scrolling.
+  //
+  // Both use virtualizer.scrollToIndex so they're immune to estimateSize
+  // drift and to column-count changes between sessions. Double rAF gives
+  // the virtualizer at least one paint to lay out row positions.
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
     if (scrollRestoredRef.current) return
-    if (!data) return
+    if (!data || comics.length === 0 || cols <= 0) return
+
+    const maxRow = Math.max(0, Math.ceil(comics.length / cols) - 1)
+
+    if (lastOpenedComicId !== null) {
+      const idx = comics.findIndex((c) => c.id === lastOpenedComicId)
+      if (idx >= 0) {
+        const row = Math.min(Math.floor(idx / cols), maxRow)
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            virtualizer.scrollToIndex(row, { align: 'center' })
+            setLastOpenedComicId(null)
+            scrollRestoredRef.current = true
+          })
+        })
+        return
+      }
+      // Comic no longer in the current filtered set; drop the marker and
+      // fall through to the generic restore.
+      setLastOpenedComicId(null)
+    }
+
     const targetComic = library.scrollComic
-    if (targetComic <= 0 || comics.length === 0 || cols <= 0) {
-      if (targetComic <= 0) scrollRestoredRef.current = true
+    if (targetComic <= 0) {
+      scrollRestoredRef.current = true
       return
     }
-    const targetRow = Math.min(
-      Math.floor(targetComic / cols),
-      Math.max(0, Math.ceil(comics.length / cols) - 1),
-    )
+    const targetRow = Math.min(Math.floor(targetComic / cols), maxRow)
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         virtualizer.scrollToIndex(targetRow, { align: 'start' })
         scrollRestoredRef.current = true
       })
     })
-  }, [data, comics.length, cols, library.scrollComic, virtualizer])
+  }, [data, comics, cols, library.scrollComic, lastOpenedComicId, setLastOpenedComicId, virtualizer])
 
   async function handleLogout() {
     await api.logout().catch(() => {})

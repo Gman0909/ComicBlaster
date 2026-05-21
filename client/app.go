@@ -9,6 +9,9 @@ package main
 import (
 	"context"
 	"log"
+	"time"
+
+	"comicblaster-client/discovery"
 )
 
 // App is the Wails lifecycle handle + RPC surface. Its methods are
@@ -46,4 +49,30 @@ func (a *App) Ping() string {
 // version so users can tell which side is ahead during upgrades.
 func (a *App) Version() string {
 	return a.version
+}
+
+// Discover runs the configured discovery layers (mDNS, Tailscale CLI)
+// in parallel up to a fixed budget. Returns every reachable
+// ComicBlaster server found, deduped by URL. Always returns a slice —
+// the frontend gets [] not null when nothing is found.
+//
+// The frontend can call this on launch, on the "Switch server" action,
+// and on demand from the Connection panel's Refresh button.
+func (a *App) Discover() []discovery.ServerInfo {
+	return discovery.Browse(a.ctx, 2*time.Second)
+}
+
+// ProbeURL verifies a user-typed URL points at a ComicBlaster server.
+// Used by the manual-entry form in the discovery picker. The returned
+// ServerInfo carries the server's name + version + measured latency
+// so the picker can show them before the user commits.
+func (a *App) ProbeURL(url string) (*discovery.ServerInfo, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 3*time.Second)
+	defer cancel()
+	info, err := discovery.Probe(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	info.Source = "manual"
+	return info, nil
 }

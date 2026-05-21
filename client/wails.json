@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ComicBlaster",
+  "outputfilename": "ComicBlaster",
+  "frontend:install": "powershell -Command \"cd ../web; npm install\"",
+  "frontend:build": "powershell -ExecutionPolicy Bypass -File ./scripts/prepare-frontend.ps1",
+  "frontend:dev:watcher": "powershell -Command \"cd ../web; npm run dev\"",
+  "frontend:dev:serverUrl": "http://localhost:5173",
+  "wailsjsdir": "./bindings",
+  "author": {
+    "name": "ComicBlaster contributors"
+  },
+  "info": {
+    "productName": "ComicBlaster",
+    "productVersion": "0.3.0",
+    "copyright": "MIT — see LICENSE",
+    "comments": "Native client for a self-hosted ComicBlaster server."
+  }
+}

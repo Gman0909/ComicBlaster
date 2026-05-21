@@ -99,6 +99,17 @@ function NativeBootstrap({ children }: { children: React.ReactNode }) {
     if (!isNative()) return true
     return getApiConfig().baseUrl !== ''
   })
+  // Settings → Connection → Disconnect fires a 'cb-disconnect' window
+  // event. Listening here (rather than reloading the page) avoids a
+  // Wails-specific quirk: window.location.reload() re-evaluates the
+  // bundle but the Go-side bindings global isn't always re-injected,
+  // so isNative() can briefly return false right after a reload —
+  // which routed the user to /login instead of the picker.
+  useEffect(() => {
+    const handler = () => setHasServer(false)
+    window.addEventListener('cb-disconnect', handler)
+    return () => window.removeEventListener('cb-disconnect', handler)
+  }, [])
   if (isNative() && !hasServer) {
     return <DiscoveryPicker onConnected={() => setHasServer(true)} />
   }

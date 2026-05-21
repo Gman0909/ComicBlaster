@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Loader2, Power, RotateCw, Server } from 'lucide-react'
-import { api, type User, type Label, type Collection } from '../api'
+import { api, configureApi, type User, type Label, type Collection } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
-import { bridge, isNative, type ConnectionState } from '../native'
+import { bridge, isNative, setCurrentToken, type ConnectionState } from '../native'
 
 // ── shared input style ──────────────────────────────────────────────────────
 const inp = 'w-full rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 py-2.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors'
@@ -716,12 +716,35 @@ function ConnectionSection({ self }: { self: User }) {
 
   useEffect(() => { if (conn) refresh() }, [conn?.url]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const setUser = useStore((s) => s.setUser)
+  const navigate = useNavigate()
   async function disconnect() {
     if (!br) return
     if (!confirm('Disconnect from this server? You will need to re-discover or re-enter the URL next launch.')) return
     await br.ClearConnection()
-    // Reload so main.tsx's bootNative runs fresh and lands on the picker.
-    window.location.reload()
+    // In-process reset (no window.location.reload — see App.tsx's
+    // NativeBootstrap for why a reload mis-routes us to /login). The
+    // order matters:
+    //   1. Drop the in-memory bearer token + reset api config so any
+    //      stray fetch from a still-mounted component fails closed.
+    //   2. Clear the zustand user so AuthGuard won't render
+    //      children if it briefly remounts before the picker takes
+    //      over.
+    //   3. Navigate back to / so when the picker commits and routes
+    //      remount, we land on the library, not the now-stale
+    //      /settings.
+    //   4. Fire cb-disconnect — NativeBootstrap listens and sets
+    //      hasServer=false, swapping in the picker.
+    setCurrentToken(null)
+    configureApi({
+      baseUrl: '',
+      auth: 'cookie',
+      getToken: () => null,
+      onToken: () => {},
+    })
+    setUser(null)
+    navigate('/', { replace: true })
+    window.dispatchEvent(new CustomEvent('cb-disconnect'))
   }
 
   async function restartServer() {

@@ -12,6 +12,7 @@ import { Search, RefreshCw, Plug, Loader2, Wifi, Server, Globe } from 'lucide-re
 import { configureApi } from '../api'
 import {
   bridge,
+  getCurrentToken,
   setCurrentToken,
   type ServerInfo,
 } from '../native'
@@ -49,12 +50,16 @@ export default function DiscoveryPicker({ onConnected }: Props) {
     setConnecting(info.url)
     try {
       // Fresh API config — token starts as null; Login.tsx will
-      // populate it.
+      // populate it via onToken. CRITICAL: getToken must read from the
+      // module-level currentToken (not a literal null), otherwise the
+      // very first request after login still sends without an
+      // Authorization header — onToken updates currentToken but a
+      // closure that always returns null is blind to that update.
       setCurrentToken(null)
       configureApi({
         baseUrl: info.url,
         auth: 'bearer',
-        getToken: () => null, // placeholder, replaced by NativeBootstrap-installed closure
+        getToken: getCurrentToken,
         onToken: async (t) => {
           setCurrentToken(t)
           if (t) await br.SetToken(t)

@@ -173,6 +173,41 @@ CB_API_TARGET=http://192.168.1.50:8082 npm run dev
 The Vite dev server proxies `/api` to the Go server (defaults to
 `http://localhost:8082`).
 
+### Native client (Wails)
+
+`client/` is a Wails v2 desktop shell around the same React app. It
+auto-discovers ComicBlaster servers on the LAN (mDNS / Bonjour) and on
+your Tailnet (via the `tailscale` CLI), or you can paste a URL. The JWT
+is stored in the OS keyring (Windows Credential Manager / macOS Keychain
+/ Linux Secret Service); the chosen server URL lives next to it in your
+user config dir.
+
+Requirements:
+
+- Go 1.22+, Node.js LTS, npm
+- [Wails CLI](https://wails.io/docs/gettingstarted/installation):
+  `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- Platform-specific webview library:
+  - **Windows** — WebView2 runtime (preinstalled on Windows 11; auto-
+    installed by the NSIS bundle in Phase 5)
+  - **macOS** — WebKit (preinstalled)
+  - **Linux** — `libwebkit2gtk-4.1-dev` / `webkit2gtk-4.1` (Debian:
+    `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev`)
+
+Wails v2 doesn't cross-compile between OSes (each platform needs its
+own native webview at link time), so the binary you produce locally
+matches your machine. Multi-OS releases come from CI (Phase 5).
+
+```bash
+cd client
+wails build                          # → client/build/bin/ComicBlaster(.exe|.app|/)
+wails dev                            # hot-reload dev mode (vite + go)
+```
+
+The frontend:install / frontend:build / frontend:dev:watcher hooks in
+`client/wails.json` are small Node scripts under `client/scripts/`,
+which makes the project build the same way on every OS.
+
 ## Data dir layout
 
 Everything stateful lives in the data dir — back this up to preserve your

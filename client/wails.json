@@ -2,9 +2,9 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "ComicBlaster",
   "outputfilename": "ComicBlaster",
-  "frontend:install": "powershell -NoProfile -Command \"cd ../../web; if (-not (Test-Path node_modules)) { npm install }\"",
-  "frontend:build": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-frontend.ps1",
-  "frontend:dev:watcher": "powershell -NoProfile -Command \"cd ../../web; npm run dev\"",
+  "frontend:install": "node ../scripts/install-web-deps.mjs",
+  "frontend:build": "node ../scripts/prepare-frontend.mjs",
+  "frontend:dev:watcher": "node ../scripts/dev-watcher.mjs",
   "frontend:dev:serverUrl": "http://localhost:5173",
   "wailsjsdir": "./bindings",
   "author": {

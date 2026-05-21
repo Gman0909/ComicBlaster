@@ -5,8 +5,9 @@ React on the front end. Runs comfortably on a Raspberry Pi 5 or any small
 home server. Designed to read your library off a NAS/SMB mount or a local
 folder — no uploads required.
 
-<img width="2165" height="1184" alt="image" src="https://github.com/user-attachments/assets/3a079684-d45f-4501-b1dd-e2cf7e52309a" />
-
+<p align="center">
+  <img src="docs/screenshots/library-desktop.png" alt="ComicBlaster library grid with sort, filter chips, and per-comic progress bars" width="900">
+</p>
 
 ## Features
 
@@ -139,6 +140,39 @@ comicblaster-data/
 ├── covers/            # extracted comic covers (300px JPEG)
 └── secret.key         # persistent JWT signing key
 ```
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/reader-desktop.png">
+        <img src="docs/screenshots/reader-desktop.png" alt="Reader view: a Spider-Man cover fits to the viewport; the top bar exposes Back, comic title, labels, collections, thumbnail, and fullscreen; bottom bar has previous / page slider / next + a page counter">
+      </a>
+      <p><strong>Reader</strong> — same chrome and gestures for CBZ, CBR, and PDF. Slider scrubs the full book; pinch / wheel / double-tap zooms; horizontal trackpad swipe pages.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/settings-desktop.png">
+        <img src="docs/screenshots/settings-desktop.png" alt="Settings page showing the Labels and Collections sections, each with a list of items and an add button, plus a Library paths section listing the configured comic folder">
+      </a>
+      <p><strong>Settings</strong> — labels, collections, library paths and admin user management all live here. No need to hand-edit <code>config.yaml</code> after the first run.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/library-mobile.png">
+        <img src="docs/screenshots/library-mobile.png" alt="Library on a mobile viewport: two-column grid, search bar at full usable width, sort collapsed behind an icon next to the filter and view-toggle controls">
+      </a>
+      <p><strong>Mobile library</strong> — responsive grid; sort collapses to an icon-triggered popover so the search box stays usable on a phone.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/library-desktop.png">
+        <img src="docs/screenshots/library-desktop.png" alt="Library desktop view: a grid of comic covers with progress bars across the bottom of unread ones and a Read overlay on finished ones; filter chips above; sort dropdown in the header">
+      </a>
+      <p><strong>Library</strong> — sortable, filterable by labels and collections, unread-only toggle, per-user progress shown as a thin blue bar across each cover.</p>
+    </td>
+  </tr>
+</table>
 
 ## License
 

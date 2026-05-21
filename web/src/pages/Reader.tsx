@@ -153,8 +153,24 @@ export default function Reader() {
     ? pdfPageCount
     : serverCount
 
-  // Restore saved progress; mark ready so saves can begin
+  // Restore saved progress.
+  //
+  // It used to depend on [comic] and run again on EVERY React Query
+  // refetch, which clobbered the user's slider/keyboard navigation back
+  // to the server-side last_page whenever a refetch landed mid-read. The
+  // user's backward change then got overwritten by a save with a higher
+  // seq triggered by the bounce — backward changes appeared to "not
+  // register" until manually retried.
+  //
+  // We can't simply latch after the first restore either: React Query
+  // serves cached data (potentially stale from before the previous save)
+  // immediately, then refetches in the background. We want the fresh
+  // refetch to win on a cold mount — but only if the user hasn't taken
+  // over yet. So the latch is gated on user input via userMovedRef, set
+  // by goTo() on every slider / chevron / keyboard / gesture action.
+  const userMovedRef = useRef(false)
   useEffect(() => {
+    if (userMovedRef.current) return
     if (!comic) return
     if (comic.progress?.last_page && comic.progress.last_page > 1) {
       // PDFs report page_count=0 because pdf.js owns the count — only clamp
@@ -162,6 +178,7 @@ export default function Reader() {
       const target = comic.page_count > 0
         ? Math.min(comic.progress.last_page, comic.page_count)
         : comic.progress.last_page
+      pageRef.current = target // keep ref in lockstep for goBack/beacon
       setPage(target)
     }
     readyRef.current = true
@@ -287,10 +304,15 @@ export default function Reader() {
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
 
   const goTo = useCallback((n: number) => {
-    setPage((prev) => {
-      const next = Math.max(1, Math.min(n, totalPages))
-      return next !== prev ? next : prev
-    })
+    const next = Math.max(1, Math.min(n, totalPages))
+    // Update the ref synchronously so goBack / beforeunload see the new
+    // page even if invoked in the same task tick (before React flushes
+    // the setState and the [page] useEffect updates the ref).
+    pageRef.current = next
+    // Mark that the user has navigated — restore effect now stops
+    // overwriting their position on subsequent React Query refetches.
+    userMovedRef.current = true
+    setPage((prev) => (next !== prev ? next : prev))
   }, [totalPages])
 
   // Keyboard

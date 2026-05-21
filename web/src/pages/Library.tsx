@@ -50,6 +50,7 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
   return (
     <motion.button
       onClick={onClick}
+      data-comic-id={comic.id}
       className={`group relative flex flex-col text-left rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
         selected
           ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
@@ -587,34 +588,45 @@ export default function Library() {
     if (gridWidth === 0 || cols <= 0) return
 
     const maxRow = Math.max(0, Math.ceil(comics.length / cols) - 1)
-    const el = scrollRef.current
 
     function landAtRow(row: number, align: 'start' | 'center') {
-      // measure() forces the virtualizer to recompute positions with the
-      // latest rowHeight estimate; rAF gives that pass time to flush.
       virtualizer.measure()
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           virtualizer.scrollToIndex(row, { align })
-          // Defensive fallback: scrollToIndex sometimes lands a partial
-          // row off-screen depending on viewport math. Force the scroll
-          // element to the computed offset as a backup.
-          if (el && align === 'center') {
-            const offset = row * rowHeight
-            const desired = Math.max(0, offset - el.clientHeight / 2 + rowHeight / 2)
-            const max = el.scrollHeight - el.clientHeight
-            el.scrollTop = Math.min(desired, Math.max(0, max))
-          }
           scrollRestoredRef.current = true
         })
       })
     }
 
+    // Targeted restore: the user just opened this specific comic. The
+    // virtualizer's estimateSize is never perfectly accurate (covers vary,
+    // labels add height, fonts differ across devices), so the most
+    // reliable way to land the card inside the viewport is to (a) scroll
+    // the virtualizer to the row so the card is rendered into the DOM,
+    // then (b) ask the card itself to scrollIntoView({ block: 'center' }).
+    // The browser uses the card's actual measured rect, not our estimate.
     if (lastOpenedComicId !== null) {
       const idx = comics.findIndex((c) => c.id === lastOpenedComicId)
       if (idx >= 0) {
         const row = Math.min(Math.floor(idx / cols), maxRow)
-        landAtRow(row, 'center')
+        const targetId = lastOpenedComicId
+        virtualizer.measure()
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            virtualizer.scrollToIndex(row, { align: 'center' })
+            // Give React + the virtualizer one frame to render the row,
+            // then locate the card in the DOM and ask the browser to put
+            // it dead-center using actual measurements.
+            requestAnimationFrame(() => {
+              const card = scrollRef.current?.querySelector(
+                `[data-comic-id="${targetId}"]`,
+              ) as HTMLElement | null
+              card?.scrollIntoView({ block: 'center', behavior: 'auto' })
+              scrollRestoredRef.current = true
+            })
+          })
+        })
         setLastOpenedComicId(null)
         return
       }

@@ -1,12 +1,14 @@
-import { useEffect, lazy, Suspense } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { api } from './api'
+import { api, getApiConfig } from './api'
 import { useStore } from './store'
+import { isNative } from './native'
 import Login from './pages/Login'
 import Library from './pages/Library'
 import Reader from './pages/Reader'
 import Settings from './pages/Settings'
+import DiscoveryPicker from './pages/DiscoveryPicker'
 import { FullPageSpinner } from './components/Spinner'
 
 const ReaderEpub = lazy(() => import('./pages/ReaderEpub'))
@@ -85,19 +87,39 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// NativeBootstrap gates the routed app behind a server-picker in the
+// Wails shell. The browser deployment short-circuits: isNative() is
+// false, so we go straight to the routes. In native mode we check
+// whether main.tsx already configured a baseUrl from the saved
+// connection state — if yes, jump into the routes (AuthGuard will run
+// /api/auth/me and bounce to /login if the token is gone). If no, show
+// the discovery picker until the user commits to a server.
+function NativeBootstrap({ children }: { children: React.ReactNode }) {
+  const [hasServer, setHasServer] = useState(() => {
+    if (!isNative()) return true
+    return getApiConfig().baseUrl !== ''
+  })
+  if (isNative() && !hasServer) {
+    return <DiscoveryPicker onConnected={() => setHasServer(true)} />
+  }
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <ThemeSync />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<AuthGuard><Library /></AuthGuard>} />
-          <Route path="/read/:id" element={<AuthGuard><ReaderDispatch /></AuthGuard>} />
-          <Route path="/settings" element={<AuthGuard><Settings /></AuthGuard>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <ThemeSync />
+      <NativeBootstrap>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<AuthGuard><Library /></AuthGuard>} />
+            <Route path="/read/:id" element={<AuthGuard><ReaderDispatch /></AuthGuard>} />
+            <Route path="/settings" element={<AuthGuard><Settings /></AuthGuard>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </NativeBootstrap>
     </QueryClientProvider>
   )
 }

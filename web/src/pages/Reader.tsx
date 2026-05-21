@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { TransformWrapper, TransformComponent, useControls, useTransformEffect } from 'react-zoom-pan-pinch'
 import { ArrowLeft, ChevronLeft, ChevronRight, Image, Tag, Bookmark, Maximize, Minimize } from 'lucide-react'
-import { api } from '../api'
+import { api, type Comic, type ComicsPage } from '../api'
 import SetThumbnailModal from '../components/SetThumbnailModal'
 import { FullPageSpinner } from '../components/Spinner'
 import { useFullscreen } from '../hooks/useFullscreen'
@@ -137,7 +137,16 @@ export default function Reader() {
     queryClient.invalidateQueries({ queryKey: ['collections'] })
   }
 
+  // page          = the page currently being fetched + rendered + saved.
+  // scrubPage     = the slider's visible position while the user is interacting.
+  //
+  // These are intentionally separate so that dragging the slider across 200
+  // pages does NOT trigger 200 image fetches. The slider updates scrubPage
+  // freely; we commit to `page` only when the user releases the thumb (or
+  // pauses long enough for the debounce to fire). The committed page is the
+  // ONLY thing that drives image loads, preloads, and progress saves.
   const [page, setPage] = useState(1)
+  const [scrubPage, setScrubPage] = useState(1)
   const [pdfPageCount, setPdfPageCount] = useState(0)
   const [controlsVisible, setControlsVisible] = useState(true)
   const [zoomed, setZoomed] = useState(false)
@@ -180,12 +189,46 @@ export default function Reader() {
         : comic.progress.last_page
       pageRef.current = target // keep ref in lockstep for goBack/beacon
       setPage(target)
+      setScrubPage(target)
     }
     readyRef.current = true
   }, [comic])
 
-  // Keep ref in sync so goBack / beforeunload always see the latest page
-  useEffect(() => { pageRef.current = page }, [page])
+  // Keep ref + scrub slider in sync so goBack / beforeunload always see the
+  // latest page, and the slider thumb tracks programmatic page changes
+  // (chevrons, keyboard, swipe, restore).
+  useEffect(() => {
+    pageRef.current = page
+    setScrubPage(page)
+  }, [page])
+
+  // Patch the React Query cache used by Library so the progress bar reflects
+  // the user's true position the instant they return — without waiting for
+  // the background refetch. Mirrors the cover-patch pattern in
+  // SetThumbnailModal. Same shape as the server's progressResp.
+  const patchLibraryProgress = useCallback((lastPage: number) => {
+    if (lastPage < 1) return
+    const now = new Date().toISOString()
+    queryClient.setQueriesData<ComicsPage>({ queryKey: ['comics'] }, (old) => {
+      if (!old?.comics) return old
+      return {
+        ...old,
+        comics: old.comics.map((c) =>
+          c.id === comicId
+            ? { ...c, progress: { ...(c.progress ?? {}), last_page: lastPage, updated_at: now } }
+            : c,
+        ),
+      }
+    })
+    queryClient.setQueryData<Comic>(['comic', comicId], (old) =>
+      old ? { ...old, progress: { ...(old.progress ?? {}), last_page: lastPage, updated_at: now } } : old,
+    )
+  }, [comicId, queryClient])
+
+  // Ref so the unmount cleanup (which captures the initial closure) can reach
+  // the latest patch function without re-binding the effect each render.
+  const patchRef = useRef(patchLibraryProgress)
+  patchRef.current = patchLibraryProgress
 
   // Single-flight save queue.
   //
@@ -265,10 +308,14 @@ export default function Reader() {
   // the Reader without going through goBack. Both paths fire sendBeacon with
   // a current seq so this write reliably beats any queue save still in
   // flight (server only accepts writes with a higher seq).
+  //
+  // Beacons are fire-and-forget — by the time the Library mounts and refires
+  // its comics query, the server may not yet have committed the write.
+  // patchLibraryProgress closes that gap by writing the user's true page
+  // directly into the React Query cache, so the Library renders the right
+  // bar immediately and the background refetch only confirms it.
   useEffect(() => {
     const send = () => {
-      // Skip only if we never learned a page (PDF that never loaded a count
-      // would have pageRef.current=1 by default — still worth recording).
       if (pageRef.current < 1) return
       const body = JSON.stringify({
         last_page: pageRef.current,
@@ -283,22 +330,27 @@ export default function Reader() {
     window.addEventListener('beforeunload', send)
     return () => {
       window.removeEventListener('beforeunload', send)
-      // Unmount = SPA navigation (browser back, in-app nav, etc.). Fire a
-      // final beacon so the library always refetches against the user's
-      // latest position even if it crossed a backward move.
+      // Unmount = SPA navigation (browser back, in-app nav, etc.).
+      // Patch the library cache FIRST (synchronous), then fire the beacon.
+      // The order matters: by the time React mounts the Library, the cache
+      // already shows the user's final page.
+      patchRef.current(pageRef.current)
       send()
     }
   }, [comicId])
 
   // Await the save before navigating so the library always loads after the
   // write — and crucially, await the *queue draining*, not just one fetch,
-  // so any in-flight save can't land after we leave the page.
+  // so any in-flight save can't land after we leave the page. Patching the
+  // cache up front means the Library renders the right bar even before the
+  // refetch returns.
   const goBack = useCallback(async () => {
+    patchLibraryProgress(pageRef.current)
     try {
       await enqueueSave(pageRef.current)
     } catch {}
     navigate(-1)
-  }, [enqueueSave, navigate])
+  }, [enqueueSave, navigate, patchLibraryProgress])
 
   const [thumbnailOpen, setThumbnailOpen] = useState(false)
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen()
@@ -313,7 +365,50 @@ export default function Reader() {
     // overwriting their position on subsequent React Query refetches.
     userMovedRef.current = true
     setPage((prev) => (next !== prev ? next : prev))
+    setScrubPage(next)
   }, [totalPages])
+
+  // Slider scrub commit. The slider's onChange (mapped by React to the DOM
+  // `input` event) feeds scrubPage continuously; committing (= updating page
+  // + firing image fetch + save) is gated to:
+  //   - the native DOM `change` event, which fires on commit (mouse release,
+  //     touch end, keyboard release, blur-with-change) in every browser. We
+  //     wire this ourselves via addEventListener because React's onChange
+  //     prop is the `input` event, not `change`, and synthetic onPointerUp
+  //     on a range input is unreliable in Firefox.
+  //   - a trailing-edge debounce as a fallback so a long pause still commits
+  //     even if `change` somehow doesn't fire (e.g. programmatic updates).
+  // This collapses a 200-page drag from 200 image fetches into 1.
+  const sliderRef = useRef<HTMLInputElement>(null)
+  const scrubTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const SCRUB_DEBOUNCE_MS = 200
+
+  const handleScrub = useCallback((n: number) => {
+    setScrubPage(n)
+    if (scrubTimer.current) clearTimeout(scrubTimer.current)
+    scrubTimer.current = setTimeout(() => {
+      scrubTimer.current = undefined
+      goTo(n)
+    }, SCRUB_DEBOUNCE_MS)
+  }, [goTo])
+
+  // Wire the native `change` event to commit immediately on release. Reads
+  // the input's value directly to avoid capturing stale scrubPage state.
+  useEffect(() => {
+    const el = sliderRef.current
+    if (!el) return
+    const onCommit = () => {
+      if (scrubTimer.current) {
+        clearTimeout(scrubTimer.current)
+        scrubTimer.current = undefined
+      }
+      goTo(Number(el.value))
+    }
+    el.addEventListener('change', onCommit)
+    return () => el.removeEventListener('change', onCommit)
+  }, [goTo])
+
+  useEffect(() => () => { if (scrubTimer.current) clearTimeout(scrubTimer.current) }, [])
 
   // Keyboard
   useEffect(() => {
@@ -553,8 +648,9 @@ export default function Reader() {
               </button>
 
               <input
-                type="range" min={1} max={totalPages} value={page}
-                onChange={(e) => goTo(Number(e.target.value))}
+                ref={sliderRef}
+                type="range" min={1} max={totalPages} value={scrubPage}
+                onChange={(e) => handleScrub(Number(e.target.value))}
                 className="flex-1 accent-[var(--color-accent)]"
               />
 
@@ -567,7 +663,7 @@ export default function Reader() {
               </button>
 
               <span className="text-white/50 text-xs tabular-nums w-16 text-right shrink-0">
-                {page} / {totalPages}
+                {scrubPage} / {totalPages}
               </span>
             </div>
           </motion.div>

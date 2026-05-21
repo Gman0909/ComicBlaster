@@ -60,17 +60,80 @@ export interface ComicsPage {
 // to its error state — that's the underlying cause of "stuck on Loading".
 const DEFAULT_TIMEOUT_MS = 15_000
 
+// Two deployment shapes are supported by the same API module:
+//
+//   1. Browser (default) — UI is served by the Go server from the same
+//      origin; auth uses an httpOnly cb_token cookie; URLs are relative.
+//   2. Native client (Wails / Tauri / etc.) — UI is loaded from a non-HTTP
+//      origin (wails://, app://, file://) so cookies can't reach the
+//      remote server. Auth uses Authorization: Bearer with the JWT held
+//      in the OS keyring; URLs are absolute against the discovered server.
+//
+// The native runtime calls configureApi() before mounting React. The
+// browser does NOT call it, and the zero-value defaults reproduce the
+// pre-Phase-2 behaviour byte-for-byte (cookie creds, relative URLs).
+interface ApiConfig {
+  baseUrl: string                         // '' for same-origin web
+  auth: 'cookie' | 'bearer'
+  getToken: () => string | null           // only used when auth='bearer'
+  onToken: (token: string | null) => void // login fires once on success, logout once on success
+}
+
+const apiConfig: ApiConfig = {
+  baseUrl: '',
+  auth: 'cookie',
+  getToken: () => null,
+  onToken: () => {},
+}
+
+export function configureApi(cfg: Partial<ApiConfig>): void {
+  Object.assign(apiConfig, cfg)
+}
+
+// Public read-only view of the current config, mostly so the native shell
+// can confirm what it set + so debug surfaces (Settings → Connection) can
+// show what's in effect.
+export function getApiConfig(): Readonly<ApiConfig> {
+  return apiConfig
+}
+
+// Build the absolute (or same-origin) URL for an API path. Centralised so
+// the URL helpers (coverUrl / pageUrl / fileUrl) and the fetch wrappers
+// agree on prefixing, including the case where pathOrUrl already starts
+// with http(s):// (don't double-prefix).
+function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  return apiConfig.baseUrl + path
+}
+
+// applyAuth mutates the headers + credentials of a fetch init based on
+// the active auth mode. Bearer mode never sends cookies — the native
+// client's origin doesn't have any, and turning credentials off avoids
+// CORS preflight surprises.
+function applyAuth(init: RequestInit & { headers: Record<string, string> }): RequestInit {
+  if (apiConfig.auth === 'bearer') {
+    init.credentials = 'omit'
+    const t = apiConfig.getToken()
+    if (t) init.headers['Authorization'] = `Bearer ${t}`
+  } else {
+    init.credentials = 'include'
+  }
+  return init
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS)
   try {
-    const res = await fetch(path, {
+    const headers: Record<string, string> = {}
+    if (body) headers['Content-Type'] = 'application/json'
+    const init = applyAuth({
       method,
-      credentials: 'include',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
     })
+    const res = await fetch(apiUrl(path), init)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
       throw Object.assign(new Error(err.error ?? res.statusText), { status: res.status })
@@ -87,14 +150,33 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   }
 }
 
+// In bearer mode, opt in to the server's "?token=1" path so the JWT
+// comes back in the response body. Stash it via onToken before returning
+// the user data, so subsequent requests pick up the Authorization header
+// on the very next call.
+async function loginAndCaptureToken(path: string, body: unknown): Promise<User> {
+  if (apiConfig.auth !== 'bearer') {
+    return req<User>('POST', path, body)
+  }
+  const withToken = path + (path.includes('?') ? '&' : '?') + 'token=1'
+  const data = await req<User & { token?: string }>('POST', withToken, body)
+  if (data.token) apiConfig.onToken(data.token)
+  // Don't leak the token into downstream callers; the keyring owns it now.
+  const { token: _ignored, ...rest } = data
+  return rest as User
+}
+
 export const api = {
   // auth
   setupStatus: () => req<{ setup_needed: boolean }>('GET', '/api/auth/setup'),
   setup: (username: string, password: string, email = '') =>
-    req<User>('POST', '/api/auth/setup', { username, password, email }),
+    loginAndCaptureToken('/api/auth/setup', { username, password, email }),
   login: (username: string, password: string) =>
-    req<User>('POST', '/api/auth/login', { username, password }),
-  logout: () => req<void>('POST', '/api/auth/logout'),
+    loginAndCaptureToken('/api/auth/login', { username, password }),
+  logout: async () => {
+    await req<void>('POST', '/api/auth/logout')
+    if (apiConfig.auth === 'bearer') apiConfig.onToken(null)
+  },
   me: () => req<User>('GET', '/api/auth/me'),
   changePassword: (current: string, next: string) =>
     req<void>('POST', '/api/auth/password', { current, new: next }),
@@ -126,12 +208,12 @@ export const api = {
   setCover: (id: number, page: number) =>
     req<void>('POST', `/api/comics/${id}/cover`, { page }),
   uploadCover: async (id: number, blob: Blob) => {
-    const res = await fetch(`/api/comics/${id}/cover/upload`, {
+    const init = applyAuth({
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'image/jpeg' },
       body: blob,
     })
+    const res = await fetch(apiUrl(`/api/comics/${id}/cover/upload`), init)
     if (!res.ok) throw new Error(res.statusText)
   },
   clearCover: (id: number) =>
@@ -196,9 +278,15 @@ export const api = {
   triggerScan: () => req<void>('POST', '/api/scan'),
   scanStatus: () => req<{ running: boolean; processed: number; current: string; last_scan: string; last_count: number }>('GET', '/api/scan/status'),
 
-  // URL helpers (not fetched via api — used directly by img/canvas/pdf.js)
-  coverUrl: (id: number) => `/api/comics/${id}/cover`,
+  // URL helpers (not fetched via api — used directly by img/canvas/pdf.js).
+  // Prefix with the configured baseUrl so the native client points at the
+  // remote Pi instead of its own (empty) origin. Note: <img>, <canvas>,
+  // and pdf.js DON'T attach the Authorization header from configureApi —
+  // for the native bearer-mode case, the Pi will need to accept a token
+  // query param (?token=…) on these endpoints in a follow-up. For now,
+  // the browser/cookie case is unaffected.
+  coverUrl: (id: number) => apiUrl(`/api/comics/${id}/cover`),
   pageUrl: (id: number, n: number, width?: number) =>
-    `/api/comics/${id}/pages/${n}${width ? `?width=${width}` : ''}`,
-  fileUrl: (id: number) => `/api/comics/${id}/file`,
+    apiUrl(`/api/comics/${id}/pages/${n}${width ? `?width=${width}` : ''}`),
+  fileUrl: (id: number) => apiUrl(`/api/comics/${id}/file`),
 }

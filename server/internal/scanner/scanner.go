@@ -194,6 +194,14 @@ func (s *Scanner) Watch(intervalSecs int) {
 	}
 }
 
+// needsCover returns true if a re-scan should attempt cover extraction
+// despite the file being otherwise unchanged. Used to back-fill
+// thumbnails for PDFs indexed by an earlier build that couldn't
+// rasterise them (before pdftocairo support landed).
+func needsCover(c *storage.Comic) bool {
+	return c != nil && c.CoverPath == "" && !c.CustomCover
+}
+
 func (s *Scanner) processFile(path string) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -201,8 +209,12 @@ func (s *Scanner) processFile(path string) {
 	}
 
 	existing, _ := s.db.GetComicByPath(path)
-	if existing != nil && existing.FileMtime.Equal(info.ModTime().UTC()) {
-		return // unchanged
+	// Fast path: file unchanged AND we already have a cover. Skip
+	// the read + upsert entirely. If the cover is missing (e.g. an
+	// earlier build couldn't rasterise this PDF), fall through to
+	// the rest of processFile so the cover step gets another shot.
+	if existing != nil && existing.FileMtime.Equal(info.ModTime().UTC()) && !needsCover(existing) {
+		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))

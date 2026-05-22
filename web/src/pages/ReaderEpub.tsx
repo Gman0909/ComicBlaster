@@ -50,6 +50,12 @@ export default function ReaderEpub() {
 
   const [controlsVisible, setControlsVisible] = useState(true)
   const [pct, setPct] = useState(0)
+  // Surfaced when epub.js fails to render the file (malformed spine,
+  // unreadable archive, etc.). Without this the user just sees a
+  // black screen because epub.js's crash happens inside a
+  // requestAnimationFrame callback that bypasses the display()
+  // promise rejection path.
+  const [renderError, setRenderError] = useState<string | null>(null)
   const [fontIdx, setFontIdx] = useState(() => {
     const stored = localStorage.getItem('cb-epub-font-idx')
     return stored ? parseInt(stored, 10) : 2 // 100%
@@ -116,7 +122,70 @@ export default function ReaderEpub() {
     rendition.themes.fontSize(`${FONT_STEPS[fontIdx]}%`)
 
     const startCfi = comic.progress?.last_cfi || undefined
-    rendition.display(startCfi).then(() => { readyRef.current = true })
+    // Sequence: wait for the book's manifest to parse → sanitise the
+    // spine → try to display.
+    //
+    // The sanitisation step is defensive. Some ePubs declare spine
+    // itemrefs whose idref has no matching manifest item — the
+    // classic example is `<itemref idref="cover"/>` with no
+    // `<item id="cover"/>`. When epub.js tries to render those it
+    // crashes in archive.request via `new Path(undefined).indexOf("://"`)
+    // and because the throw fires inside a requestAnimationFrame
+    // callback the display() promise never rejects — the iframe
+    // never gets injected and the user sees a black void. Stripping
+    // the broken items before display() bypasses the crash; remaining
+    // valid spine entries render normally.
+    ;(async () => {
+      try {
+        await book.ready
+        // epub.js's Book['spine'] type doesn't expose spineItems
+        // publicly; cast through unknown so TS doesn't complain about
+        // the field we're rewriting.
+        const spine = book.spine as unknown as {
+          spineItems: Array<{ href?: string; idref?: string; index: number }>
+          spineByHref: Record<string, number>
+          spineById: Record<string, number>
+          length: number
+        }
+        const items = spine.spineItems
+        const brokenCount = items?.filter((s) => !s.href).length ?? 0
+        if (brokenCount > 0) {
+          const cleaned = items.filter((s) => !!s.href)
+          cleaned.forEach((s, i) => { s.index = i })
+          spine.spineItems = cleaned
+          spine.length = cleaned.length
+          // Rebuild the href/id → index lookup maps so spine.get()
+          // still resolves by all the keys epub.js supports.
+          const byHref: Record<string, number> = {}
+          const byId: Record<string, number> = {}
+          cleaned.forEach((s, i) => {
+            if (s.href) {
+              byHref[s.href] = i
+              byHref[encodeURI(s.href)] = i
+              try { byHref[decodeURI(s.href)] = i } catch { /* malformed URI */ }
+            }
+            if (s.idref) byId[s.idref] = i
+          })
+          spine.spineByHref = byHref
+          spine.spineById = byId
+          console.warn(`epub ${comicId}: skipped ${brokenCount} broken spine item(s) with no manifest href`)
+        }
+
+        // Display with a CFI fallback — if the stored CFI pointed at a
+        // now-removed spine slot (or was never valid), retry from the
+        // start so the reader at least opens.
+        try {
+          await rendition.display(startCfi)
+        } catch (cfiErr) {
+          console.warn(`epub ${comicId}: display(${startCfi}) failed, retrying from start`, cfiErr)
+          await rendition.display()
+        }
+        readyRef.current = true
+      } catch (err) {
+        console.error(`epub ${comicId}: render failed`, err)
+        setRenderError((err as Error)?.message ?? String(err))
+      }
+    })()
 
     rendition.on('relocated', (loc: Location) => {
       cfiRef.current = loc.start.cfi
@@ -365,6 +434,29 @@ export default function ReaderEpub() {
       {/* Book container with side tap zones */}
       <div className="flex-1 relative">
         <div ref={containerRef} className="absolute inset-0" />
+        {renderError && (
+          <div
+            role="alert"
+            className="absolute inset-0 z-30 flex items-center justify-center p-6 pointer-events-auto"
+            style={{ backgroundColor: THEMES[theme].body.background }}
+          >
+            <div className="max-w-md text-center space-y-3">
+              <p className={`text-base font-semibold ${overlayText}`}>This ePub can&apos;t be opened.</p>
+              <p className={`text-sm ${overlayText} opacity-70 break-words`}>
+                {renderError}
+              </p>
+              <p className={`text-xs ${overlayText} opacity-50`}>
+                The file is likely malformed (spine references missing manifest items, broken archive, etc.). Try rebuilding it with Calibre or Sigil.
+              </p>
+              <button
+                onClick={goBack}
+                className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium border border-white/15 ${overlayText} opacity-85 hover:opacity-100 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 transition-opacity`}
+              >
+                Back to library
+              </button>
+            </div>
+          </div>
+        )}
         {/* Tap zones — left = prev, right = next, middle = toggle controls */}
         <div
           className="absolute inset-y-0 left-0 w-1/5 z-10 cursor-w-resize"

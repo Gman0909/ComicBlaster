@@ -448,9 +448,18 @@ export default function Library() {
   const search = library.search
   const setSearch = setLibrarySearch
   const sort = library.sort
-  const setSort = setLibrarySort
   const order = library.order
   const setOrder = setLibraryOrder
+
+  // Some sort options have an obviously "right" direction the first
+  // time the user picks them: last_read defaults to descending so the
+  // most-recently-read shows first (asc would land you on a comic
+  // you read months ago). The user can still flip the arrow after —
+  // we only nudge when the sort field changes via this handler.
+  const setSort = useCallback((s: string) => {
+    setLibrarySort(s)
+    if (s === 'last_read') setLibraryOrder('desc')
+  }, [setLibrarySort, setLibraryOrder])
   const labelFilters = library.labelFilters
   const collectionFilters = library.collectionFilters
   const [thumbnailComic, setThumbnailComic] = useState<Comic | null>(null)

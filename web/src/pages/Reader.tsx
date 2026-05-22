@@ -8,6 +8,7 @@ import { api, type Comic, type ComicsPage } from '../api'
 import SetThumbnailModal from '../components/SetThumbnailModal'
 import { FullPageSpinner } from '../components/Spinner'
 import { useFullscreen } from '../hooks/useFullscreen'
+import { useOffline } from '../hooks/useOffline'
 
 // Resets the zoom/pan transform whenever the page changes — instead of
 // remounting the entire TransformWrapper (which throws away the canvas /
@@ -108,6 +109,16 @@ export default function Reader() {
     queryKey: ['collections'],
     queryFn: () => api.collections(),
   })
+
+  // Offline-reading routing. When the comic has been downloaded,
+  // every per-page / whole-file URL gets swapped to the Wails
+  // AssetServer's /_offline/{id}/... path so reads come from the
+  // local disk and work without a server connection.
+  const { entries: offlineEntries } = useOffline()
+  const isOffline = offlineEntries.has(comicId)
+  const fileUrlFor   = (id: number) => isOffline ? api.offlineFileUrl(id) : api.fileUrl(id)
+  const pageUrlFor   = (id: number, n: number, width?: number) =>
+    isOffline ? api.offlinePageUrl(id, n) : api.pageUrl(id, n, width)
 
   const [labelsOpen, setLabelsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
@@ -309,7 +320,7 @@ export default function Reader() {
       // window.Image — disambiguated from the lucide `Image` icon imported above.
       const img = new window.Image()
       img.decoding = 'async'
-      img.src = api.pageUrl(comicId, n, width)
+      img.src = pageUrlFor(comicId, n, width)
       imgs.push(img)
     }
     return () => {
@@ -625,11 +636,11 @@ export default function Reader() {
                 image / canvas appears as soon as the bits are ready. */}
             {comic.format === 'pdf' ? (
               <Suspense fallback={null}>
-                <PDFPage url={api.fileUrl(comicId)} page={page} onPageCount={setPdfPageCount} />
+                <PDFPage url={fileUrlFor(comicId)} page={page} onPageCount={setPdfPageCount} />
               </Suspense>
             ) : (
               <img
-                src={api.pageUrl(comicId, page, window.innerWidth)}
+                src={pageUrlFor(comicId, page, window.innerWidth)}
                 alt={`Page ${page}`}
                 className="max-h-dvh max-w-full object-contain"
                 decoding="async"

@@ -158,6 +158,73 @@ function applyAuth(init: RequestInit & { headers: Record<string, string> }): Req
   return init
 }
 
+// Offline progress queue. While the native client is in offline
+// mode (server unreachable but cached library shown — see
+// AuthGuard), reader page-turn saves bypass the network and write
+// to a coalesced localStorage queue keyed by comic ID. AuthGuard
+// drains the queue when /api/auth/me starts succeeding again.
+//
+// Coalescing: only the highest-seq payload per comic survives. The
+// server's seq-based upsert means we can replay in any order — only
+// the freshest position per comic matters.
+const PROGRESS_QUEUE_KEY = 'cb-progress-queue-v1'
+
+interface QueuedProgress {
+  comic_id: number
+  last_page: number
+  last_cfi: string
+  seq: number
+}
+
+let offlineModeGetter: () => boolean = () => false
+export function setOfflineModeGetter(fn: () => boolean): void {
+  offlineModeGetter = fn
+}
+
+function queueProgress(comicID: number, payload: { last_page: number; last_cfi: string; seq: number }): void {
+  try {
+    const raw = localStorage.getItem(PROGRESS_QUEUE_KEY)
+    const list: QueuedProgress[] = raw ? JSON.parse(raw) : []
+    const next: QueuedProgress = { comic_id: comicID, ...payload }
+    const idx = list.findIndex((e) => e.comic_id === comicID)
+    if (idx >= 0) {
+      if (list[idx].seq < next.seq) list[idx] = next
+    } else {
+      list.push(next)
+    }
+    localStorage.setItem(PROGRESS_QUEUE_KEY, JSON.stringify(list))
+  } catch { /* localStorage full / quotaExceeded — silently drop */ }
+}
+
+/** Drain the queue by POSTing every pending entry. Called by
+ *  AuthGuard on the offline→online transition. Returns the count of
+ *  entries that successfully reached the server. */
+export async function drainProgressQueue(): Promise<number> {
+  let list: QueuedProgress[]
+  try {
+    const raw = localStorage.getItem(PROGRESS_QUEUE_KEY)
+    list = raw ? JSON.parse(raw) : []
+  } catch { return 0 }
+  if (list.length === 0) return 0
+  let ok = 0
+  const remaining: QueuedProgress[] = []
+  for (const e of list) {
+    try {
+      await req<void>('POST', `/api/comics/${e.comic_id}/progress`, {
+        last_page: e.last_page,
+        last_cfi: e.last_cfi,
+        seq: e.seq,
+      })
+      ok++
+    } catch {
+      remaining.push(e) // keep for next retry
+    }
+  }
+  if (remaining.length === 0) localStorage.removeItem(PROGRESS_QUEUE_KEY)
+  else localStorage.setItem(PROGRESS_QUEUE_KEY, JSON.stringify(remaining))
+  return ok
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS)
@@ -227,8 +294,8 @@ export const api = {
   },
   comic: (id: number) => req<Comic>('GET', `/api/comics/${id}`),
   progress: (id: number) => req<{ last_page: number; updated_at: string } | null>('GET', `/api/comics/${id}/progress`),
-  saveProgress: (id: number, last_page: number, last_cfi?: string, seq?: number) =>
-    req<void>('POST', `/api/comics/${id}/progress`, {
+  saveProgress: (id: number, last_page: number, last_cfi?: string, seq?: number) => {
+    const payload = {
       last_page,
       last_cfi: last_cfi ?? '',
       // Date.now() is monotonic enough for ordering concurrent writes from a
@@ -236,7 +303,18 @@ export const api = {
       // currently stored value, so out-of-order arrivals can't clobber a
       // newer position with an older one.
       seq: seq ?? Date.now(),
-    }),
+    }
+    // When the native client decided we're offline, write to the
+    // local queue instead of attempting the POST. AuthGuard drains
+    // the queue when it next sees /api/auth/me succeed — the same
+    // seq-based upsert means out-of-order arrivals at the server
+    // are fine, so we can drain in any order.
+    if (offlineModeGetter()) {
+      queueProgress(id, payload)
+      return Promise.resolve()
+    }
+    return req<void>('POST', `/api/comics/${id}/progress`, payload)
+  },
   // Backfill page_count for formats the scanner can't enumerate server-side
   // (PDF reports its real numPages once pdf.js opens the doc; ePub posts 100
   // so the existing pct formula doubles as a percentage display).
@@ -349,6 +427,14 @@ export const api = {
   pageUrl: (id: number, n: number, width?: number) =>
     mediaUrl(`/api/comics/${id}/pages/${n}${width ? `?width=${width}` : ''}`),
   fileUrl: (id: number) => mediaUrl(`/api/comics/${id}/file`),
+
+  // Offline variants — same-origin paths served by the Wails
+  // AssetServer (see client/spa.go). Used by the readers when a
+  // comic has been downloaded for offline reading. Width is
+  // intentionally ignored: serving the natural-size image is fine
+  // because the bytes never leave the local machine.
+  offlineFileUrl: (id: number) => `/_offline/${id}`,
+  offlinePageUrl: (id: number, n: number) => `/_offline/${id}/pages/${n}`,
 }
 
 // mediaUrl builds the URL for a subresource that the browser (not our fetch

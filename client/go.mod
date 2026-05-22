@@ -4,6 +4,7 @@ go 1.22.0
 
 require (
 	github.com/grandcat/zeroconf v1.0.0
+	github.com/nwaples/rardecode v1.1.3
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sys v0.30.0

@@ -24,6 +24,40 @@ export interface ConnectionState {
   version?: string
 }
 
+export interface OfflineEntry {
+  comic_id: number
+  server_url: string
+  title: string
+  filename: string
+  format: string
+  size_bytes: number
+  downloaded_at: string
+  file_mtime_at_download?: string
+  cover_blob?: string  // base64 JPEG — populated when Phase E renders thumbnails offline
+}
+
+export interface OfflineStatus {
+  comic_id: number
+  state: 'queued' | 'downloading' | 'complete' | 'error'
+  bytes_done: number
+  bytes_total: number
+  error?: string
+}
+
+export interface OfflineStorageInfo {
+  total_bytes: number
+  free_bytes: number
+  entries: OfflineEntry[]
+  manifest_dir: string
+}
+
+interface DownloadComicParams {
+  comic_id: number
+  format: string
+  title: string
+  cover_url: string
+}
+
 interface Bridge {
   GetSavedConnection(): Promise<ConnectionState | null>
   SaveConnection(s: ConnectionState): Promise<void>
@@ -34,11 +68,28 @@ interface Bridge {
   RestartServer(): Promise<void>
   Version(): Promise<string>
   Ping(): Promise<string>
+  // Offline-reading additions (Phase A on the Go side):
+  DownloadComic(p: DownloadComicParams): Promise<void>
+  DownloadStatus(id: number): Promise<OfflineStatus | null>
+  RemoveDownload(id: number): Promise<void>
+  ListDownloads(): Promise<OfflineEntry[]>
+  StorageInfo(): Promise<OfflineStorageInfo>
+  RemoveAllDownloads(): Promise<void>
+  CacheLibrary(payload: string): Promise<void>
+  LoadCachedLibrary(): Promise<string>
+}
+
+// Wails v2 exposes the event bus on window.runtime; we use it to
+// subscribe to download progress without polling DownloadStatus.
+interface WailsRuntime {
+  EventsOn(name: string, cb: (...args: unknown[]) => void): () => void
+  EventsOff(name: string): void
 }
 
 declare global {
   interface Window {
     go?: { main?: { App?: Bridge } }
+    runtime?: WailsRuntime
   }
 }
 

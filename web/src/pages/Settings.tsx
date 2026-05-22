@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Eye, Loader2, Power, RotateCw, Server, AlertTriangle, FileQuestion } from 'lucide-react'
+import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Eye, Loader2, Power, RotateCw, Server, AlertTriangle, FileQuestion, HardDriveDownload } from 'lucide-react'
 import { api, configureApi, type User, type Label, type Collection, type MissingComic } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { bridge, isNative, setCurrentToken, type ConnectionState } from '../native'
 import BrowsePathModal from '../components/BrowsePathModal'
+import { useOffline } from '../hooks/useOffline'
 
 // ── shared input style ──────────────────────────────────────────────────────
 const inp = 'w-full rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 py-2.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors'
@@ -669,6 +670,172 @@ function IgnoredSection() {
   )
 }
 
+// ── Offline storage (native client only; auto-hides when empty) ────────────
+//
+// Inventory + management UI for the offline-reading feature. Lists
+// every downloaded comic with size + downloaded-at + a Remove
+// button, plus a single Remove-all action and total / free-disk
+// readouts.
+//
+// Auto-hides entirely when:
+//   - we're not in the native client (offline reading is desktop-only), or
+//   - no comics are downloaded
+// This keeps the browser deployment clean and doesn't surface an
+// empty section to native users who haven't downloaded anything yet.
+function OfflineStorageSection() {
+  const off = useOffline()
+  const [storage, setStorage] = useState<{ total_bytes: number; free_bytes: number } | null>(null)
+  const [search, setSearch] = useState('')
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false)
+
+  // Fetch StorageInfo whenever the entries set changes so total
+  // bytes + free disk stay accurate after downloads / removals.
+  useEffect(() => {
+    if (!off.available) return
+    const br = bridge()
+    if (!br) return
+    let cancelled = false
+    br.StorageInfo()
+      .then((info) => { if (!cancelled) setStorage({ total_bytes: info.total_bytes, free_bytes: info.free_bytes }) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [off.entries.size, off.available])
+
+  if (!off.available || off.entries.size === 0) return null
+
+  const entries = Array.from(off.entries.values())
+    .sort((a, b) => (b.downloaded_at || '').localeCompare(a.downloaded_at || ''))
+  const filtered = search
+    ? entries.filter((e) => e.title.toLowerCase().includes(search.toLowerCase()))
+    : entries
+  const totalBytes = entries.reduce((sum, e) => sum + e.size_bytes, 0)
+
+  async function removeOne(comicId: number, title: string) {
+    if (!confirm(`Remove “${title}” from this device? You can re-download it any time.`)) return
+    await off.remove(comicId).catch(() => {})
+  }
+
+  async function removeAll() {
+    const br = bridge()
+    if (!br) return
+    await br.RemoveAllDownloads().catch(() => {})
+    await off.refresh()
+    setConfirmAllOpen(false)
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1 flex items-center gap-2">
+        <HardDriveDownload size={14} className="text-[var(--color-accent)]" aria-hidden />
+        Offline storage
+        <span className="text-[var(--color-text-muted)] font-normal tabular-nums">
+          ({off.entries.size} · {formatBytes(totalBytes)})
+        </span>
+      </h2>
+      <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-lg">
+        Comics stored on this device. Available to read without a server connection.
+        {storage && storage.free_bytes > 0 && (
+          <span> · {formatBytes(storage.free_bytes)} free on disk</span>
+        )}
+      </p>
+
+      <div className="max-w-lg space-y-3">
+        {entries.length > 6 && (
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter by title"
+            className={inp}
+          />
+        )}
+        <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
+          {filtered.length === 0 && (
+            <p className="px-3 py-3 text-xs text-[var(--color-text-muted)] italic text-center">
+              No matches.
+            </p>
+          )}
+          {filtered.map((e) => (
+            <div key={e.comic_id} className="flex items-center gap-3 px-3 py-2.5">
+              <HardDriveDownload size={14} className="text-[var(--color-accent)] shrink-0" aria-hidden />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-[var(--color-text)] truncate" title={e.title}>{e.title}</p>
+                <p className="text-[11px] text-[var(--color-text-muted)] tabular-nums">
+                  {formatBytes(e.size_bytes)} · {relativeDate(e.downloaded_at)}
+                </p>
+              </div>
+              <button
+                onClick={() => removeOne(e.comic_id, e.title)}
+                className="p-2.5 rounded-md text-[var(--color-text-muted)] hover:text-red-400 hover:bg-[var(--color-surface-overlay)] transition-colors"
+                aria-label={`Remove ${e.title} from this device`}
+                title="Remove from this device"
+              >
+                <Trash2 size={14} aria-hidden />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirmAllOpen(true)}
+          className={`${btn} bg-red-600 hover:bg-red-500 text-white flex items-center gap-2`}
+        >
+          <Trash2 size={14} aria-hidden /> Remove all from this device
+        </button>
+      </div>
+
+      {confirmAllOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setConfirmAllOpen(false)}
+        >
+          <div
+            className="bg-[var(--color-surface-raised)] rounded-xl shadow-2xl w-full max-w-sm flex flex-col gap-4 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <AlertTriangle size={14} className="text-red-400" aria-hidden />
+              Remove all {entries.length} downloads?
+            </h2>
+            <p className="text-sm text-[var(--color-text-muted)] leading-snug">
+              This will free {formatBytes(totalBytes)} of disk space. The comics stay in your library —
+              you can re-download them any time.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmAllOpen(false)} className="flex-1 rounded-lg border border-[var(--color-border)] py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+                Cancel
+              </button>
+              <button onClick={removeAll} className="flex-1 rounded-lg bg-red-600 hover:bg-red-500 py-2 text-sm font-medium text-white transition-colors">
+                Remove all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function relativeDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const seconds = (Date.now() - d.getTime()) / 1000
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`
+  if (seconds < 86400 * 14) return `${Math.floor(seconds / 86400)} days ago`
+  return d.toLocaleDateString()
+}
+
 // ── Missing files (admin only; auto-hides when empty) ───────────────────────
 //
 // The scanner flags rows it can't observe under an available library
@@ -1130,6 +1297,7 @@ export default function Settings() {
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
         {/* Connection — native client only; renders null in browser */}
         <ConnectionSection self={user} />
+        <OfflineStorageSection />
         <PasswordSection />
         <ScanSection />
         <LabelsSection />

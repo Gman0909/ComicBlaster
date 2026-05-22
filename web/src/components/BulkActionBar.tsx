@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { Tag, Bookmark, Trash2, X, AlertTriangle, Plus } from 'lucide-react'
+import { Tag, Bookmark, Trash2, X, AlertTriangle, Plus, HardDriveDownload } from 'lucide-react'
 import { api, type Comic, type Collection } from '../api'
+import { useOffline } from '../hooks/useOffline'
 
 // Mirror of the palette used in Settings → Labels. Used to pick a default
 // colour for labels created from the bulk-action bar.
@@ -14,7 +15,7 @@ interface Props {
   onClear: () => void
 }
 
-type Popover = 'labels' | 'collections' | 'remove' | null
+type Popover = 'labels' | 'collections' | 'remove' | 'download' | null
 
 // Fetch every comic ID inside the given collections. Used at action time so
 // label/remove operations from the collections view affect every contained comic.
@@ -33,6 +34,10 @@ export default function BulkActionBar({ selected, selectedCollections = [], canR
   const queryClient = useQueryClient()
   const [open, setOpen] = useState<Popover>(null)
   const [busy, setBusy] = useState(false)
+  // Offline-download surface — only shown when running in the
+  // native client. In the browser deployment the prop is undefined,
+  // so the Download button hides entirely without further gating.
+  const offline = useOffline()
 
   const { data: labels = [] } = useQuery({ queryKey: ['labels'], queryFn: () => api.labels() })
   const { data: collections = [] } = useQuery({ queryKey: ['collections'], queryFn: () => api.collections() })
@@ -209,6 +214,15 @@ export default function BulkActionBar({ selected, selectedCollections = [], canR
               onClick={() => setOpen(open === 'collections' ? null : 'collections')}
             />
           )}
+          {offline.available && (
+            <ActionButton
+              icon={<HardDriveDownload size={18} />}
+              label="Download"
+              active={open === 'download'}
+              disabled={!hasSelection || isCollectionMode}
+              onClick={() => setOpen(open === 'download' ? null : 'download')}
+            />
+          )}
           {canRemove && (
             <ActionButton
               icon={<Trash2 size={18} />}
@@ -305,6 +319,55 @@ export default function BulkActionBar({ selected, selectedCollections = [], canR
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {open === 'download' && (
+          <div className="p-3 border-t border-[var(--color-border)] space-y-3">
+            <p className="text-sm text-[var(--color-text-muted)] leading-snug">
+              Download{' '}
+              <span className="text-[var(--color-text)] font-medium">
+                {selected.length} comic{selected.length === 1 ? '' : 's'}
+              </span>{' '}
+              to this device for offline reading. Already-downloaded comics will be skipped.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setOpen(null)}
+                disabled={busy}
+                className="flex-1 rounded-lg border border-[var(--color-border)] py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setBusy(true)
+                  // Fire-and-forget — the Go side processes downloads
+                  // serially in background goroutines and pushes
+                  // per-tick progress via the offline:progress
+                  // event, which useOffline subscribes to and turns
+                  // into live card overlays. We don't await each
+                  // call here because that'd lock the UI for the
+                  // duration of every download.
+                  for (const c of selected) {
+                    if (offline.entries.has(c.id)) continue
+                    offline.download({
+                      comic_id: c.id,
+                      format: c.format,
+                      title: c.title,
+                      cover_url: c.cover_url,
+                    }).catch(() => {})
+                  }
+                  setBusy(false)
+                  setOpen(null)
+                  onClear()
+                }}
+                disabled={busy}
+                className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]`}
+              >
+                {busy ? 'Queueing…' : `Download ${selected.length}`}
+              </button>
+            </div>
           </div>
         )}
 

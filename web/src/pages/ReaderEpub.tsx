@@ -7,6 +7,7 @@ import ePub, { type Book, type Rendition, type Location } from 'epubjs'
 import { api } from '../api'
 import { FullPageSpinner } from '../components/Spinner'
 import { useFullscreen } from '../hooks/useFullscreen'
+import { useOffline } from '../hooks/useOffline'
 
 type Theme = 'light' | 'dark' | 'sepia'
 
@@ -30,6 +31,13 @@ export default function ReaderEpub() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const comicId = Number(id)
+  // Read-once snapshot of which comics are downloaded for offline
+  // reading. Used to decide whether to point epub.js at the local
+  // file (`/_offline/<id>`) or the network (`/api/comics/<id>/file`).
+  // We don't re-subscribe to updates because the rendition is
+  // created in a single useEffect; if the user toggles offline state
+  // mid-read, the new state takes effect on next open.
+  const { entries: offlineEntries } = useOffline()
 
   const { data: comic } = useQuery({
     queryKey: ['comic', comicId],
@@ -127,7 +135,13 @@ export default function ReaderEpub() {
   // Mount the epub.js rendition once
   useEffect(() => {
     if (!comic || !containerRef.current) return
-    const book = ePub(api.fileUrl(comicId), { openAs: 'epub' })
+    // Prefer the locally-stored copy when the comic has been
+    // downloaded for offline reading. Same origin so epub.js's
+    // XHR happily fetches it, and it works without a server
+    // connection — the whole point of the feature.
+    const isOffline = offlineEntries.has(comicId)
+    const sourceUrl = isOffline ? api.offlineFileUrl(comicId) : api.fileUrl(comicId)
+    const book = ePub(sourceUrl, { openAs: 'epub' })
     bookRef.current = book
     const rendition = book.renderTo(containerRef.current, {
       width:  '100%',

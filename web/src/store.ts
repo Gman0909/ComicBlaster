@@ -31,6 +31,13 @@ interface AppState {
   // from Settings → Missing files.
   showMissing: boolean
   setShowMissing: (v: boolean) => void
+  // True when the native client has decided the server is
+  // unreachable but a non-empty offline manifest exists, so the
+  // app falls back to the cached library + locally-downloaded
+  // comics. Reset to false when /api/auth/me starts succeeding
+  // again. Never true in the browser deployment.
+  offlineMode: boolean
+  setOfflineMode: (v: boolean) => void
   // Library UI state — persisted so opening a comic and coming back keeps
   // the user's place (search, sort, active filters, scroll).
   library: LibraryUiState
@@ -72,6 +79,8 @@ export const useStore = create<AppState>()(
       setUnreadOnly: (unreadOnly) => set({ unreadOnly }),
       showMissing: false,
       setShowMissing: (showMissing) => set({ showMissing }),
+      offlineMode: false,
+      setOfflineMode: (offlineMode) => set({ offlineMode }),
 
       library: defaultLibrary,
       setLibrarySearch: (q) =>
@@ -110,6 +119,12 @@ export const useStore = create<AppState>()(
         libraryView: s.libraryView,
         unreadOnly: s.unreadOnly,
         showMissing: s.showMissing,
+        // user is persisted so offline-mode bootstrap has a name
+        // to show in the profile menu. Server-side role is the
+        // authority; admin sections gate on it but their endpoints
+        // also require a valid token, so the worst a stale user
+        // can do is show the UI for actions that immediately error.
+        user: s.user,
         library: s.library,
         lastOpenedComicId: s.lastOpenedComicId,
       }),

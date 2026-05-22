@@ -36,24 +36,47 @@ const offlinePathPrefix = "/_offline/"
 func spaHandler(root fs.FS, off *offline.Manager) http.Handler {
 	fileServer := http.FileServer(http.FS(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Offline comic file passthrough. Path is /_offline/<comic_id>;
-		// we look up the file in the manifest and stream it.
+		// Offline file routes:
+		//   /_offline/<id>             → whole archive (PDF/ePub) via http.ServeFile
+		//   /_offline/<id>/pages/<n>   → Nth image inside a local CBZ/CBR via ServePage
+		// The /pages/N path is what Reader.tsx hits when a downloaded comic
+		// is being read offline; the bare path is what pdf.js / epub.js
+		// stream from for whole-file formats.
 		if strings.HasPrefix(r.URL.Path, offlinePathPrefix) {
-			idStr := strings.TrimPrefix(r.URL.Path, offlinePathPrefix)
-			id, err := strconv.ParseInt(idStr, 10, 64)
+			rest := strings.TrimPrefix(r.URL.Path, offlinePathPrefix)
+			// Split into "<id>" or "<id>/pages/<n>"
+			parts := strings.Split(rest, "/")
+			if len(parts) == 0 || parts[0] == "" {
+				http.Error(w, "bad offline path", http.StatusBadRequest)
+				return
+			}
+			id, err := strconv.ParseInt(parts[0], 10, 64)
 			if err != nil {
 				http.Error(w, "bad comic id", http.StatusBadRequest)
 				return
 			}
-			fp := off.FilePath(id)
-			if fp == "" {
-				http.Error(w, "not downloaded", http.StatusNotFound)
+			if len(parts) == 1 {
+				fp := off.FilePath(id)
+				if fp == "" {
+					http.Error(w, "not downloaded", http.StatusNotFound)
+					return
+				}
+				// http.ServeFile sets Content-Type + Last-Modified +
+				// supports Range requests, which pdf.js relies on for
+				// progressive loading of large PDFs.
+				http.ServeFile(w, r, fp)
 				return
 			}
-			// http.ServeFile sets Content-Type + Last-Modified +
-			// supports Range requests, which pdf.js relies on for
-			// progressive loading of large PDFs.
-			http.ServeFile(w, r, fp)
+			if len(parts) == 3 && parts[1] == "pages" {
+				n, err := strconv.Atoi(parts[2])
+				if err != nil {
+					http.Error(w, "bad page number", http.StatusBadRequest)
+					return
+				}
+				off.ServePage(w, r, id, n)
+				return
+			}
+			http.Error(w, "bad offline path", http.StatusBadRequest)
 			return
 		}
 

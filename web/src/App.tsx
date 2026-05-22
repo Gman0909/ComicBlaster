@@ -1,9 +1,9 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { api, getApiConfig } from './api'
+import { api, getApiConfig, setOfflineModeGetter, drainProgressQueue } from './api'
 import { useStore } from './store'
-import { isNative } from './native'
+import { isNative, bridge } from './native'
 import Login from './pages/Login'
 import Library from './pages/Library'
 import Reader from './pages/Reader'
@@ -72,15 +72,65 @@ function ReaderDispatch() {
 }
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, setUser } = useStore()
+  const { user, setUser, offlineMode, setOfflineMode } = useStore()
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (!user) {
-      api.me()
-        .then(setUser)
-        .catch(() => navigate('/login', { replace: true }))
-    }
+    let cancelled = false
+    api.me()
+      .then((u) => {
+        if (cancelled) return
+        setUser(u)
+        // We just heard from the server — clear any prior
+        // offline-mode flag so the library re-fetches live data
+        // and the offline banner disappears. Also drain the
+        // progress queue (reader page-turns saved while offline)
+        // so the server learns the user's latest position. The
+        // seq-based upsert on the server makes replay order-
+        // insensitive.
+        if (offlineMode) {
+          setOfflineMode(false)
+          drainProgressQueue().catch(() => {})
+        }
+      })
+      .catch(async (err: any) => {
+        if (cancelled) return
+        // 401 / 403 = the server actively rejected us. Token
+        // expired or revoked → re-login. Anything WITHOUT a status
+        // code is a network / DNS / TLS error: the server
+        // probably isn't reachable. In the native client we'd
+        // rather show the cached library + downloaded comics than
+        // bounce the user to a login they can't complete.
+        const status = err?.status
+        if (status === 401 || status === 403) {
+          navigate('/login', { replace: true })
+          return
+        }
+        if (!status && isNative()) {
+          const br = bridge()
+          if (br) {
+            try {
+              const downloads = await br.ListDownloads()
+              if (downloads && downloads.length > 0) {
+                setOfflineMode(true)
+                // The persisted user (zustand partialize) is the
+                // last-known login; if missing entirely we fall
+                // back to a placeholder so AuthGuard's `if (!user)`
+                // guard doesn't block the cached library from
+                // rendering.
+                if (!user) setUser({ id: 0, username: 'offline', role: 'user' } as any)
+                return
+              }
+            } catch { /* fall through to /login */ }
+          }
+        }
+        navigate('/login', { replace: true })
+      })
+    return () => { cancelled = true }
+  // user is intentionally excluded — we only run this guard once
+  // per AuthGuard mount; re-running on user changes would loop
+  // when setUser fires below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (!user) return null
@@ -115,6 +165,11 @@ function NativeBootstrap({ children }: { children: React.ReactNode }) {
   }
   return <>{children}</>
 }
+
+// Wire api.ts to read offlineMode from the zustand store. Done once
+// at module load — useStore.getState is reactive-free and safe to
+// call from a non-React context.
+setOfflineModeGetter(() => useStore.getState().offlineMode)
 
 export default function App() {
   return (

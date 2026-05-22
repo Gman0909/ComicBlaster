@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'framer-motion'
-import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, ArrowUpDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize } from 'lucide-react'
-import { api, resolveServerMediaUrl, type Comic, type Collection, type User } from '../api'
+import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, ArrowUpDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize, HardDriveDownload, Loader2 } from 'lucide-react'
+import { api, resolveServerMediaUrl, type Comic, type Collection, type ComicsPage, type User } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { useFullscreen } from '../hooks/useFullscreen'
+import { useOffline } from '../hooks/useOffline'
+import { bridge } from '../native'
 import SetThumbnailModal from '../components/SetThumbnailModal'
 import RemoveComicModal from '../components/RemoveComicModal'
 import BulkActionBar from '../components/BulkActionBar'
@@ -35,13 +37,24 @@ function useColumns() {
   return { cols, width, ref: measure }
 }
 
-function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, selected }: {
+function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, selected, offline, downloading, onToggleOffline, offlineMode }: {
   comic: Comic
   onClick: (e: React.MouseEvent) => void
   onSetThumbnail: () => void
   onRemove: () => void
   canRemove: boolean
   selected: boolean
+  /** True when the comic is stored locally (native client only). Drives the bottom-left badge. */
+  offline: boolean
+  /** Non-null while a download is in flight. bytes_done / bytes_total drive the progress text. */
+  downloading: { bytes_done: number; bytes_total: number } | null
+  /** Click handler for the bottom-left badge. Undefined when offline reading isn't available
+   *  (browser deployment, or native client without an active server connection). */
+  onToggleOffline?: () => void
+  /** True when the whole app is in offline mode. Drives the disabled-state visual for
+   *  comics that aren't downloaded locally — same greyscale + click-disabled treatment
+   *  the missing_since path uses, with a different label. */
+  offlineMode: boolean
 }) {
   const pct = comic.progress && comic.page_count > 0
     ? Math.round((comic.progress.last_page / comic.page_count) * 100)
@@ -52,6 +65,13 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
   // In the library: render a greyscale cover with a Missing badge,
   // disable the open-comic click + the action buttons.
   const isMissing = !!comic.missing_since
+  // Same visual treatment when we're offline AND the user hasn't
+  // downloaded THIS comic — they can see it exists but can't read
+  // it without the server. The actual file source is local
+  // (handled by useOffline + the reader's offline URL helper), so
+  // "downloaded" means readable here.
+  const isUnreachable = !isMissing && !offline && offlineMode
+  const isBlocked = isMissing || isUnreachable
 
   // The card is structured as a <motion.div> container so its action
   // buttons (set thumbnail, remove) can live as siblings of the main click
@@ -65,18 +85,24 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
       className={`group relative rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow ${
         selected
           ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
-          : isMissing
+          : isBlocked
             ? '' // no hover ring — the card isn't interactive
             : 'hover:ring-2 hover:ring-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent)]'
       }`}
-      whileHover={isMissing ? undefined : { y: -2 }}
+      whileHover={isBlocked ? undefined : { y: -2 }}
       transition={{ duration: 0.15 }}
     >
       <button
         type="button"
         onClick={onClick}
-        disabled={isMissing}
-        aria-label={isMissing ? `${comic.title} (file missing)` : `Open ${comic.title}`}
+        disabled={isBlocked}
+        aria-label={
+          isMissing
+            ? `${comic.title} (file missing)`
+            : isUnreachable
+              ? `${comic.title} (not downloaded — offline)`
+              : `Open ${comic.title}`
+        }
         className="block w-full text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:cursor-not-allowed"
       >
         {/* Cover */}
@@ -86,7 +112,7 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
             alt=""
             loading="lazy"
             className={`absolute inset-0 w-full h-full object-cover transition-all ${
-              isMissing
+              isBlocked
                 ? 'grayscale brightness-[0.35]'
                 : pct === 100
                   ? 'brightness-[0.65] saturate-50'
@@ -98,6 +124,13 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
               <span className="px-2.5 py-1 rounded-full bg-red-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-lg ring-2 ring-red-500/40">
                 Missing
+              </span>
+            </div>
+          )}
+          {isUnreachable && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
+              <span className="px-2.5 py-1 rounded-full bg-amber-600/90 text-white text-[10px] font-bold uppercase tracking-wider shadow-lg ring-2 ring-amber-500/40">
+                Offline
               </span>
             </div>
           )}
@@ -166,10 +199,10 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
 
       {/* Action buttons — siblings of the click target so they don't nest
           interactives. z-10 keeps them above the card button visually.
-          Hidden entirely for missing files: the thumbnail-grab action
-          would fail (no pages to read), and removal is done in bulk
-          from Settings → Missing files. */}
-      {!isMissing && (<>
+          Hidden entirely for blocked cards (missing files OR offline
+          mode with no local copy): the thumbnail-grab + remove + open
+          actions would all fail without a server. */}
+      {!isBlocked && (<>
       <button
         type="button"
         onClick={onSetThumbnail}
@@ -190,8 +223,85 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
           <Trash2 size={14} aria-hidden />
         </button>
       )}
+      {/* Offline indicator + toggle. Three visual states:
+            offline=true                → persistent accent-coloured badge (also acts as Remove button)
+            downloading != null         → spinner + percentage
+            offline=false, hover, native available → dimmed Download button
+          When onToggleOffline is undefined we hide the button entirely
+          (e.g. browser deployment, or native client not yet connected to a server). */}
+      {onToggleOffline && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleOffline() }}
+          disabled={!!downloading}
+          title={
+            downloading
+              ? `Downloading… ${formatPct(downloading)}`
+              : offline
+                ? `Remove “${comic.title}” from this device`
+                : `Download “${comic.title}” for offline reading`
+          }
+          aria-label={
+            downloading
+              ? `Downloading ${comic.title}`
+              : offline
+                ? `Remove ${comic.title} from this device`
+                : `Download ${comic.title} for offline reading`
+          }
+          className={`absolute bottom-2 left-2 z-10 p-2 rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all disabled:cursor-progress ${
+            offline || downloading
+              ? 'bg-[var(--color-accent-strong)]/90 hover:bg-[var(--color-accent-strong)] opacity-100'
+              : 'bg-black/70 hover:bg-black/85 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-90'
+          }`}
+        >
+          {downloading
+            ? <Loader2 size={14} className="animate-spin" aria-hidden />
+            : <HardDriveDownload size={14} aria-hidden />}
+        </button>
+      )}
       </>)}
     </motion.div>
+  )
+}
+
+function formatPct(d: { bytes_done: number; bytes_total: number }): string {
+  if (!d.bytes_total) return '…'
+  return Math.min(99, Math.round((d.bytes_done / d.bytes_total) * 100)) + '%'
+}
+
+// OfflineBanner — sticky strip at the top of the library that
+// announces the app is operating without a server connection +
+// surfaces a retry. Visible only when offlineMode is true, which is
+// only ever set in the native client (browser deployment ignores
+// the network-error path entirely and bounces to /login).
+function OfflineBanner({ downloadedCount, onRetry }: {
+  downloadedCount: number
+  onRetry: () => void | Promise<void>
+}) {
+  const [retrying, setRetrying] = useState(false)
+  async function retry() {
+    setRetrying(true)
+    try { await onRetry() } finally { setRetrying(false) }
+  }
+  return (
+    <div
+      role="status"
+      className="shrink-0 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-300 text-xs flex items-center gap-3"
+    >
+      <EyeOff size={14} aria-hidden />
+      <span className="flex-1">
+        <strong className="font-semibold">Offline.</strong>{' '}
+        Showing the last cached library. {downloadedCount} comic{downloadedCount === 1 ? '' : 's'} available to read locally; the rest are dimmed.
+      </span>
+      <button
+        type="button"
+        onClick={retry}
+        disabled={retrying}
+        className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-medium transition-colors disabled:opacity-50"
+      >
+        {retrying ? 'Retrying…' : 'Retry connection'}
+      </button>
+    </div>
   )
 }
 
@@ -459,7 +569,7 @@ export default function Library() {
     setUser, theme, toggleTheme, user,
     libraryView, setLibraryView,
     unreadOnly, setUnreadOnly,
-    showMissing,
+    showMissing, offlineMode, setOfflineMode,
     library, setLibrarySearch, setLibrarySort, setLibraryOrder,
     toggleLabelFilter, toggleCollectionFilter, clearLibraryFilters, setLibraryScroll,
     lastOpenedComicId, setLastOpenedComicId,
@@ -490,6 +600,22 @@ export default function Library() {
   }, [setLibrarySort, setLibraryOrder])
   const labelFilters = library.labelFilters
   const collectionFilters = library.collectionFilters
+  // Offline-reading state. Hooks into the Wails bridge — returns
+  // empty/no-op values in the browser deployment, so the gating
+  // happens once here rather than at every card.
+  const offlineState = useOffline()
+  const handleToggleOffline = useCallback((comic: Comic) => {
+    if (offlineState.entries.has(comic.id)) {
+      offlineState.remove(comic.id).catch(() => {})
+    } else {
+      offlineState.download({
+        comic_id: comic.id,
+        format: comic.format,
+        title: comic.title,
+        cover_url: comic.cover_url,
+      }).catch(() => {})
+    }
+  }, [offlineState])
   const [thumbnailComic, setThumbnailComic] = useState<Comic | null>(null)
   const [removeComic, setRemoveComic] = useState<Comic | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set())
@@ -507,19 +633,46 @@ export default function Library() {
     : 320
 
   const { data, isLoading } = useQuery({
-    queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly, showMissing],
-    queryFn: () => api.comics({
-      search,
-      sort,
-      order,
-      per_page: 500,
-      ...(labelFilters.length      ? { label_id:      labelFilters.join(',') } : {}),
-      ...(collectionFilters.length ? { collection_id: collectionFilters.join(',') } : {}),
-      ...(unreadOnly ? { unread: 1 } : {}),
-      ...(showMissing ? { include_missing: 1 } : {}),
-    }),
+    queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly, showMissing, offlineMode],
+    queryFn: async () => {
+      // Offline-mode short-circuit: read the last cached library
+      // payload from the Wails Go side. The cache is written on
+      // every successful online fetch (see effect below), so the
+      // user sees their most recent library list. Search / sort /
+      // filter parameters are intentionally ignored offline — the
+      // cache is the whole list and filtering happens client-side
+      // already in this component.
+      if (offlineMode) {
+        const br = bridge()
+        if (!br) throw new Error('offline mode requires the native client')
+        const raw = await br.LoadCachedLibrary()
+        if (!raw) throw new Error('no cached library available')
+        return JSON.parse(raw) as ComicsPage
+      }
+      return api.comics({
+        search,
+        sort,
+        order,
+        per_page: 500,
+        ...(labelFilters.length      ? { label_id:      labelFilters.join(',') } : {}),
+        ...(collectionFilters.length ? { collection_id: collectionFilters.join(',') } : {}),
+        ...(unreadOnly ? { unread: 1 } : {}),
+        ...(showMissing ? { include_missing: 1 } : {}),
+      })
+    },
     staleTime: 0,
   })
+
+  // Persist the most recent library payload so offline mode has
+  // something to render on next launch. Only writes when we
+  // actually got fresh data from the server (skipping replays of
+  // the cache itself), to avoid pointless writes.
+  useEffect(() => {
+    if (!data || offlineMode) return
+    const br = bridge()
+    if (!br) return
+    br.CacheLibrary(JSON.stringify(data)).catch(() => {})
+  }, [data, offlineMode])
 
   const { data: labels = [] } = useQuery({
     queryKey: ['labels'],
@@ -903,6 +1056,20 @@ export default function Library() {
         </div>
       </header>
 
+      {offlineMode && (
+        <OfflineBanner
+          downloadedCount={offlineState.entries.size}
+          onRetry={async () => {
+            try {
+              const me = await api.me()
+              setUser(me)
+              setOfflineMode(false)
+              queryClient.invalidateQueries({ queryKey: ['comics'] })
+            } catch { /* still offline; banner stays */ }
+          }}
+        />
+      )}
+
       {/* Filter strip: labels + collections */}
       {view === 'library' && (labels.length > 0 || collections.length > 0) && (
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
@@ -1062,17 +1229,25 @@ export default function Library() {
                       className="grid gap-3 pb-3"
                       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
                     >
-                      {rowComics.map((comic) => (
-                        <ComicCard
-                          key={comic.id}
-                          comic={comic}
-                          onClick={(e) => handleCardClick(comic, e)}
-                          onSetThumbnail={() => setThumbnailComic(comic)}
-                          onRemove={() => setRemoveComic(comic)}
-                          canRemove={isAdmin}
-                          selected={selectedIds.has(comic.id)}
-                        />
-                      ))}
+                      {rowComics.map((comic) => {
+                        const isOffline = offlineState.entries.has(comic.id)
+                        const dl = offlineState.inFlight.get(comic.id) ?? null
+                        return (
+                          <ComicCard
+                            key={comic.id}
+                            comic={comic}
+                            onClick={(e) => handleCardClick(comic, e)}
+                            onSetThumbnail={() => setThumbnailComic(comic)}
+                            onRemove={() => setRemoveComic(comic)}
+                            canRemove={isAdmin}
+                            selected={selectedIds.has(comic.id)}
+                            offline={isOffline}
+                            downloading={dl}
+                            onToggleOffline={offlineState.available && !offlineMode ? () => handleToggleOffline(comic) : undefined}
+                            offlineMode={offlineMode}
+                          />
+                        )
+                      })}
                     </div>
                   </div>
                 )

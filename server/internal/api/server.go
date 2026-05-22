@@ -111,6 +111,7 @@ func (s *server) routes() http.Handler {
 				r.Delete("/admin/library/paths/{id}", s.handleRemoveLibraryPath)
 				r.Get("/admin/library/ignored", s.handleListIgnoredPaths)
 				r.Post("/admin/library/unignore", s.handleUnignorePath)
+				r.Get("/admin/library/missing", s.handleListMissing)
 				r.Delete("/admin/comics/{id}", s.handleRemoveComic)
 				// Server-side filesystem browser for the Add-path UI.
 				// Admins only — same trust model as the existing

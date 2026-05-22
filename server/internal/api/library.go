@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"comicblaster/internal/storage"
 )
 
 // --- library paths (admin) ---
@@ -110,6 +113,49 @@ func (s *server) handleUnignorePath(w http.ResponseWriter, r *http.Request) {
 	// Trigger a rescan so the unhidden file shows up
 	go s.scanner.Scan()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- missing files (admin) ---
+
+// handleListMissing returns just the rows the scanner has flagged
+// with missing_since — used by the Settings → Missing files section
+// to show the count and populate the bulk-remove confirmation.
+//
+// Lightweight on purpose: id, path, title, missing_since per row.
+// The Settings UI doesn't need covers / labels / progress here.
+type missingResp struct {
+	ID           int64  `json:"id"`
+	Path         string `json:"path"`
+	Title        string `json:"title"`
+	MissingSince string `json:"missing_since"`
+}
+
+func (s *server) handleListMissing(w http.ResponseWriter, r *http.Request) {
+	// Reuse ListComics with IncludeMissing=true, then filter to only the
+	// flagged ones. Keeps the SQL surface small at the cost of fetching
+	// a few extra rows we discard — fine for typical library sizes.
+	comics, _, err := s.db.ListComics(storage.ListComicsParams{
+		UserID:         getClaims(r).UserID,
+		IncludeMissing: true,
+		PerPage:        100000,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	out := make([]missingResp, 0)
+	for _, c := range comics {
+		if c.MissingSince == nil {
+			continue
+		}
+		out = append(out, missingResp{
+			ID:           c.ID,
+			Path:         c.Path,
+			Title:        c.Title,
+			MissingSince: c.MissingSince.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // --- comic removal (admin) ---

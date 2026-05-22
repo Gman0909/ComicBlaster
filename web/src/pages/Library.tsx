@@ -46,6 +46,12 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
   const pct = comic.progress && comic.page_count > 0
     ? Math.round((comic.progress.last_page / comic.page_count) * 100)
     : 0
+  // Missing-file state. The scanner only ever sets/clears this flag —
+  // never hard-deletes — so the row carries reading progress + labels
+  // until the admin manually removes it via Settings → Missing files.
+  // In the library: render a greyscale cover with a Missing badge,
+  // disable the open-comic click + the action buttons.
+  const isMissing = !!comic.missing_since
 
   // The card is structured as a <motion.div> container so its action
   // buttons (set thumbnail, remove) can live as siblings of the main click
@@ -59,16 +65,19 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
       className={`group relative rounded-lg overflow-hidden bg-[var(--color-surface-raised)] transition-shadow ${
         selected
           ? 'ring-2 ring-[var(--color-accent)] shadow-lg'
-          : 'hover:ring-2 hover:ring-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent)]'
+          : isMissing
+            ? '' // no hover ring — the card isn't interactive
+            : 'hover:ring-2 hover:ring-[var(--color-accent)] focus-within:ring-2 focus-within:ring-[var(--color-accent)]'
       }`}
-      whileHover={{ y: -2 }}
+      whileHover={isMissing ? undefined : { y: -2 }}
       transition={{ duration: 0.15 }}
     >
       <button
         type="button"
         onClick={onClick}
-        aria-label={`Open ${comic.title}`}
-        className="block w-full text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        disabled={isMissing}
+        aria-label={isMissing ? `${comic.title} (file missing)` : `Open ${comic.title}`}
+        className="block w-full text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:cursor-not-allowed"
       >
         {/* Cover */}
         <div className="relative w-full bg-[var(--color-surface-overlay)]" style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}>
@@ -76,9 +85,22 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
             src={resolveServerMediaUrl(comic.cover_url)}
             alt=""
             loading="lazy"
-            className={`absolute inset-0 w-full h-full object-cover transition-all ${pct === 100 ? 'brightness-[0.65] saturate-50' : ''}`}
+            className={`absolute inset-0 w-full h-full object-cover transition-all ${
+              isMissing
+                ? 'grayscale brightness-[0.35]'
+                : pct === 100
+                  ? 'brightness-[0.65] saturate-50'
+                  : ''
+            }`}
             onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0' }}
           />
+          {isMissing && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
+              <span className="px-2.5 py-1 rounded-full bg-red-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-lg ring-2 ring-red-500/40">
+                Missing
+              </span>
+            </div>
+          )}
           {/* Format badge for types without cover art */}
           {comic.format === 'pdf' && (
             <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
@@ -143,7 +165,11 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
       </button>
 
       {/* Action buttons — siblings of the click target so they don't nest
-          interactives. z-10 keeps them above the card button visually. */}
+          interactives. z-10 keeps them above the card button visually.
+          Hidden entirely for missing files: the thumbnail-grab action
+          would fail (no pages to read), and removal is done in bulk
+          from Settings → Missing files. */}
+      {!isMissing && (<>
       <button
         type="button"
         onClick={onSetThumbnail}
@@ -164,6 +190,7 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
           <Trash2 size={14} aria-hidden />
         </button>
       )}
+      </>)}
     </motion.div>
   )
 }
@@ -432,6 +459,7 @@ export default function Library() {
     setUser, theme, toggleTheme, user,
     libraryView, setLibraryView,
     unreadOnly, setUnreadOnly,
+    showMissing,
     library, setLibrarySearch, setLibrarySort, setLibraryOrder,
     toggleLabelFilter, toggleCollectionFilter, clearLibraryFilters, setLibraryScroll,
     lastOpenedComicId, setLastOpenedComicId,
@@ -479,7 +507,7 @@ export default function Library() {
     : 320
 
   const { data, isLoading } = useQuery({
-    queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly],
+    queryKey: ['comics', search, sort, order, labelFilters, collectionFilters, unreadOnly, showMissing],
     queryFn: () => api.comics({
       search,
       sort,
@@ -488,6 +516,7 @@ export default function Library() {
       ...(labelFilters.length      ? { label_id:      labelFilters.join(',') } : {}),
       ...(collectionFilters.length ? { collection_id: collectionFilters.join(',') } : {}),
       ...(unreadOnly ? { unread: 1 } : {}),
+      ...(showMissing ? { include_missing: 1 } : {}),
     }),
     staleTime: 0,
   })

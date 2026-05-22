@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Loader2, Power, RotateCw, Server } from 'lucide-react'
-import { api, configureApi, type User, type Label, type Collection } from '../api'
+import { ArrowLeft, ScanLine, Plus, Trash2, Check, X, BookmarkPlus, Folder, EyeOff, Eye, Loader2, Power, RotateCw, Server, AlertTriangle, FileQuestion } from 'lucide-react'
+import { api, configureApi, type User, type Label, type Collection, type MissingComic } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { bridge, isNative, setCurrentToken, type ConnectionState } from '../native'
@@ -669,6 +669,189 @@ function IgnoredSection() {
   )
 }
 
+// ── Missing files (admin only; auto-hides when empty) ───────────────────────
+//
+// The scanner flags rows it can't observe under an available library
+// root with missing_since instead of hard-deleting them, so reading
+// progress / labels / collection memberships survive a NAS hiccup.
+// This section is the only place the user can permanently get rid of
+// genuinely-gone files. Toggle controls whether they show up in the
+// library view (greyed out + non-clickable) or stay hidden.
+function MissingFilesSection() {
+  const qc = useQueryClient()
+  const { data: missing = [], isLoading } = useQuery({
+    queryKey: ['missingComics'],
+    queryFn: api.missingComics,
+  })
+  const showMissing = useStore((s) => s.showMissing)
+  const setShowMissing = useStore((s) => s.setShowMissing)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  // Auto-hide the whole section when there's nothing missing. Loading
+  // state also collapses to nothing so the page doesn't flash empty
+  // headers on first render.
+  if (isLoading || missing.length === 0) return null
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1 flex items-center gap-2">
+        <FileQuestion size={14} className="text-red-400" aria-hidden />
+        Missing files
+        <span className="text-[var(--color-text-muted)] font-normal tabular-nums">({missing.length})</span>
+      </h2>
+      <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-lg">
+        Files the scanner couldn't observe last time it ran their library root. Reading progress, labels, and collection memberships are preserved until you remove them here.
+      </p>
+
+      <div className="max-w-lg space-y-3">
+        <label className="flex items-start gap-3 cursor-pointer select-none p-3 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-overlay)] transition-colors">
+          <input
+            type="checkbox"
+            checked={showMissing}
+            onChange={(e) => {
+              setShowMissing(e.target.checked)
+              qc.invalidateQueries({ queryKey: ['comics'] })
+            }}
+            className="mt-0.5 w-4 h-4 accent-[var(--color-accent)] shrink-0"
+          />
+          <div className="min-w-0">
+            <p className="text-sm text-[var(--color-text)] flex items-center gap-1.5">
+              {showMissing ? <Eye size={14} className="text-[var(--color-text-muted)]" aria-hidden /> : <EyeOff size={14} className="text-[var(--color-text-muted)]" aria-hidden />}
+              Show missing files in the library
+            </p>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+              When on, they appear greyed-out and can't be opened.
+            </p>
+          </div>
+        </label>
+
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          className={`${btn} bg-red-600 hover:bg-red-500 text-white flex items-center gap-2`}
+        >
+          <Trash2 size={14} aria-hidden /> Remove missing files…
+        </button>
+      </div>
+
+      {confirmOpen && (
+        <RemoveMissingModal
+          missing={missing}
+          onClose={() => setConfirmOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['missingComics'] })
+            qc.invalidateQueries({ queryKey: ['comics'] })
+            qc.invalidateQueries({ queryKey: ['collections'] })
+            setConfirmOpen(false)
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+// Bulk-removal confirmation for missing files. Mirrors RemoveComicModal's
+// shape (red destructive button, plain confirm text) but doesn't offer
+// the "also delete from disk" checkbox — the files are already missing,
+// so the disk-deletion would be a no-op (and ignore-listing the path
+// would just block re-discovery if the file ever comes back, which the
+// user probably doesn't want for an unintentional outage).
+function RemoveMissingModal({ missing, onClose, onDone }: {
+  missing: MissingComic[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [working, setWorking] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function confirm() {
+    setWorking(true); setErr('')
+    try {
+      // ignore=false so a file that comes back later is re-discovered
+      // (e.g. user restored from backup). deleteFile=false because the
+      // file is already missing — trying to os.Remove a path that
+      // doesn't exist would just log a soft warning.
+      await Promise.all(missing.map((m) =>
+        api.removeComic(m.id, { ignore: false, deleteFile: false }).catch(() => {})
+      ))
+      onDone()
+    } catch (e: any) {
+      setErr(e.message ?? 'Failed to remove')
+      setWorking(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-[var(--color-surface-raised)] rounded-xl shadow-2xl w-full max-w-md flex flex-col gap-4 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <AlertTriangle size={14} className="text-red-400" aria-hidden />
+            Remove {missing.length} missing file{missing.length === 1 ? '' : 's'}?
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 p-2 -m-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-overlay)] transition-colors"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+
+        <p className="text-sm text-[var(--color-text-muted)] leading-snug">
+          Reading progress, labels, and collection memberships for these {missing.length} item{missing.length === 1 ? '' : 's'} will be permanently lost. This cannot be undone.
+        </p>
+
+        <div className="max-h-40 overflow-y-auto rounded border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {missing.slice(0, 50).map((m) => (
+            <div key={m.id} className="px-3 py-1.5 text-xs">
+              <p className="text-[var(--color-text)] truncate" title={m.title}>{m.title}</p>
+              <p className="font-mono text-[10px] text-[var(--color-text-muted)] truncate" title={m.path}>{m.path}</p>
+            </div>
+          ))}
+          {missing.length > 50 && (
+            <p className="px-3 py-1.5 text-[11px] text-[var(--color-text-muted)] italic text-center">
+              …and {missing.length - 50} more
+            </p>
+          )}
+        </div>
+
+        {err && <p className="text-sm text-red-400" role="alert">{err}</p>}
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={working}
+            className="flex-1 rounded-lg border border-[var(--color-border)] py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirm}
+            disabled={working}
+            className="flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] bg-red-600 hover:bg-red-500 flex items-center justify-center gap-2"
+          >
+            {working
+              ? <><Loader2 size={14} className="animate-spin" aria-hidden /> Removing…</>
+              : <>Remove {missing.length}</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── User management section (admin only) ────────────────────────────────────
 function UsersSection({ self }: { self: User }) {
   const qc = useQueryClient()
@@ -953,6 +1136,7 @@ export default function Settings() {
         <CollectionsSection />
         {user.role === 'admin' && <LibraryPathsSection />}
         {user.role === 'admin' && <IgnoredSection />}
+        {user.role === 'admin' && <MissingFilesSection />}
         {user.role === 'admin' && <UsersSection self={user} />}
         <AboutSection />
       </div>

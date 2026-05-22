@@ -26,20 +26,21 @@ import (
 // --- response types ---
 
 type comicResp struct {
-	ID          int64                 `json:"id"`
-	Title       string                `json:"title"`
-	Series      string                `json:"series,omitempty"`
-	Volume      *int                  `json:"volume,omitempty"`
-	Issue       *float64              `json:"issue,omitempty"`
-	Format      string                `json:"format"`
-	PageCount   int                   `json:"page_count"`
-	FileSize    int64                 `json:"file_size"`
-	CoverURL    string                `json:"cover_url"`
-	CustomCover bool                  `json:"custom_cover"`
-	DateAdded   string                `json:"date_added"`
-	Progress    *progressResp         `json:"progress,omitempty"`
-	Labels      []*storage.Label      `json:"labels"`
-	Collections []*storage.Collection `json:"collections"`
+	ID           int64                 `json:"id"`
+	Title        string                `json:"title"`
+	Series       string                `json:"series,omitempty"`
+	Volume       *int                  `json:"volume,omitempty"`
+	Issue        *float64              `json:"issue,omitempty"`
+	Format       string                `json:"format"`
+	PageCount    int                   `json:"page_count"`
+	FileSize     int64                 `json:"file_size"`
+	CoverURL     string                `json:"cover_url"`
+	CustomCover  bool                  `json:"custom_cover"`
+	DateAdded    string                `json:"date_added"`
+	MissingSince string                `json:"missing_since,omitempty"` // RFC3339; empty when file is present
+	Progress     *progressResp         `json:"progress,omitempty"`
+	Labels       []*storage.Label      `json:"labels"`
+	Collections  []*storage.Collection `json:"collections"`
 }
 
 type progressResp struct {
@@ -71,6 +72,9 @@ func toComicResp(c *storage.ComicWithProgress) comicResp {
 		CustomCover: c.CustomCover,
 		DateAdded:   c.DateAdded.Format(time.RFC3339),
 	}
+	if c.MissingSince != nil {
+		cr.MissingSince = c.MissingSince.Format(time.RFC3339)
+	}
 	if c.LastPage != nil && c.ProgressUpdatedAt != nil {
 		cr.Progress = &progressResp{
 			LastPage:  *c.LastPage,
@@ -96,19 +100,24 @@ func (s *server) handleListComics(w http.ResponseWriter, r *http.Request) {
 	labelIDs := parseCSVInts(q.Get("label_id"))
 	collectionIDs := parseCSVInts(q.Get("collection_id"))
 	unread := q.Get("unread") == "1"
+	// Settings → Missing files toggle. When set, the response also
+	// includes comics flagged with missing_since (typically hidden so
+	// the library doesn't show broken thumbnails).
+	includeMissing := q.Get("include_missing") == "1"
 	userID := getClaims(r).UserID
 
 	comics, total, err := s.db.ListComics(storage.ListComicsParams{
-		UserID:        userID,
-		Search:        q.Get("search"),
-		Sort:          q.Get("sort"),
-		Order:         q.Get("order"),
-		Format:        q.Get("format"),
-		LabelIDs:      labelIDs,
-		CollectionIDs: collectionIDs,
-		UnreadOnly:    unread,
-		Page:          page,
-		PerPage:       perPage,
+		UserID:         userID,
+		Search:         q.Get("search"),
+		Sort:           q.Get("sort"),
+		Order:          q.Get("order"),
+		Format:         q.Get("format"),
+		LabelIDs:       labelIDs,
+		CollectionIDs:  collectionIDs,
+		UnreadOnly:     unread,
+		IncludeMissing: includeMissing,
+		Page:           page,
+		PerPage:        perPage,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")

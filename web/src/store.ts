@@ -26,6 +26,11 @@ interface AppState {
   setLibraryView: (v: LibraryView) => void
   unreadOnly: boolean
   setUnreadOnly: (v: boolean) => void
+  // Whether the library view also shows comics flagged with
+  // missing_since by the scanner. Default false (hidden). Flipped
+  // from Settings → Missing files.
+  showMissing: boolean
+  setShowMissing: (v: boolean) => void
   // Library UI state — persisted so opening a comic and coming back keeps
   // the user's place (search, sort, active filters, scroll).
   library: LibraryUiState
@@ -65,6 +70,8 @@ export const useStore = create<AppState>()(
       setLibraryView: (libraryView) => set({ libraryView }),
       unreadOnly: false,
       setUnreadOnly: (unreadOnly) => set({ unreadOnly }),
+      showMissing: false,
+      setShowMissing: (showMissing) => set({ showMissing }),
 
       library: defaultLibrary,
       setLibrarySearch: (q) =>
@@ -102,6 +109,7 @@ export const useStore = create<AppState>()(
         theme: s.theme,
         libraryView: s.libraryView,
         unreadOnly: s.unreadOnly,
+        showMissing: s.showMissing,
         library: s.library,
         lastOpenedComicId: s.lastOpenedComicId,
       }),

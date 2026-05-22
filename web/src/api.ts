@@ -50,9 +50,21 @@ export interface Comic {
   cover_url: string
   custom_cover: boolean
   date_added: string
+  // Set by the scanner when the file wasn't observed during a
+  // successful scan of its root. Empty/undefined while the file
+  // is present. Used by the library overlay + Settings missing-files
+  // section.
+  missing_since?: string
   progress?: { last_page: number; last_cfi?: string; updated_at: string }
   labels: Label[]
   collections: Collection[]
+}
+
+export interface MissingComic {
+  id: number
+  path: string
+  title: string
+  missing_since: string
 }
 
 export interface User {
@@ -250,6 +262,10 @@ export const api = {
   ignoredPaths: () => req<IgnoredPath[]>('GET', '/api/admin/library/ignored'),
   unignorePath: (path: string) =>
     req<void>('POST', '/api/admin/library/unignore', { path }),
+  // The scanner flags rows with missing_since when files aren't observed
+  // under an available root; this lists just those rows for the
+  // Settings → Missing files section.
+  missingComics: () => req<MissingComic[]>('GET', '/api/admin/library/missing'),
 
   // Server-side filesystem browser (admin). Path can be omitted; the
   // server picks a sensible starting directory (the service user's

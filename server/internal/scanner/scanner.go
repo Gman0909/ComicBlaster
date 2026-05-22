@@ -144,13 +144,14 @@ func (s *Scanner) Scan() {
 	// Missing sweep. Only acts on comics whose root scanned OK; for
 	// roots that failed (mount stale, dir empty, etc.) we deliberately
 	// do nothing — better to leave a stale row than wipe user state.
+	//
+	// The scanner NEVER hard-deletes missing files. It only sets /
+	// clears the missing_since flag. Purging is a manual admin action
+	// surfaced via Settings → Missing files; that's where the bulk
+	// confirmation dialog and the per-file accountability live.
 	existing, _ := s.db.AllComicPathsWithMissing()
 	now := time.Now().UTC()
-	const grace = 30 * 24 * time.Hour // hard-delete only after a month
 
-	// underRoot reports whether `path` lives under a root whose scan
-	// we trust this pass. Inlined as a closure rather than a package
-	// function because rootResult is local to Scan.
 	underRoot := func(path string) bool {
 		for _, r := range results {
 			if !r.ok {
@@ -165,8 +166,6 @@ func (s *Scanner) Scan() {
 
 	for path, missingSince := range existing {
 		if found[path] {
-			// File is present this scan — clear any stale missing
-			// flag so it shows up in the library again.
 			if missingSince != nil {
 				log.Printf("scanner: %s back from missing", path)
 				s.db.ClearMissing(path)
@@ -174,16 +173,14 @@ func (s *Scanner) Scan() {
 			continue
 		}
 		if !underRoot(path) {
-			continue // skip — see rootResult comment above
+			continue
 		}
-		// Root was scanned, file genuinely absent.
 		if missingSince == nil {
-			log.Printf("scanner: marking missing (will purge after %s) %s", grace, path)
+			log.Printf("scanner: marking missing %s", path)
 			s.db.MarkMissing(path, now)
-		} else if now.Sub(*missingSince) > grace {
-			log.Printf("scanner: purging long-missing %s", path)
-			s.db.DeleteComicByPath(path)
 		}
+		// else: still missing; nothing to do — the user removes
+		// these via Settings → Missing files.
 	}
 
 	log.Printf("scanner: scan complete (%d comics observed)", len(found))

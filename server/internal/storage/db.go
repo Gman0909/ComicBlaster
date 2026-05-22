@@ -18,19 +18,20 @@ type DB struct {
 // --- model types ---
 
 type Comic struct {
-	ID          int64
-	Path        string
-	Title       string
-	Series      string
-	Volume      *int
-	Issue       *float64
-	Format      string
-	PageCount   int
-	CoverPath   string
-	CustomCover bool
-	FileSize    int64
-	DateAdded   time.Time
-	FileMtime   time.Time
+	ID           int64
+	Path         string
+	Title        string
+	Series       string
+	Volume       *int
+	Issue        *float64
+	Format       string
+	PageCount    int
+	CoverPath    string
+	CustomCover  bool
+	FileSize     int64
+	DateAdded    time.Time
+	FileMtime    time.Time
+	MissingSince *time.Time // set by the scanner when the file isn't observed under an available root; cleared when it reappears
 }
 
 type ComicWithProgress struct {
@@ -307,11 +308,16 @@ func (d *DB) UpdateCoverPath(id int64, path string) error {
 
 func (d *DB) GetComicByPath(path string) (*Comic, error) {
 	c := &Comic{}
+	var missing sql.NullTime
 	err := d.db.QueryRow(
-		`SELECT id, path, title, series, volume, issue, format, page_count, cover_path, custom_cover, file_size, file_mtime
+		`SELECT id, path, title, series, volume, issue, format, page_count, cover_path, custom_cover, file_size, file_mtime, missing_since
 		 FROM comics WHERE path = ?`, path,
 	).Scan(&c.ID, &c.Path, &c.Title, &c.Series, &c.Volume, &c.Issue,
-		&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.FileMtime)
+		&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.FileMtime, &missing)
+	if missing.Valid {
+		t := missing.Time
+		c.MissingSince = &t
+	}
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -320,11 +326,16 @@ func (d *DB) GetComicByPath(path string) (*Comic, error) {
 
 func (d *DB) GetComicByID(id int64) (*Comic, error) {
 	c := &Comic{}
+	var missing sql.NullTime
 	err := d.db.QueryRow(
-		`SELECT id, path, title, series, volume, issue, format, page_count, cover_path, custom_cover, file_size, file_mtime
+		`SELECT id, path, title, series, volume, issue, format, page_count, cover_path, custom_cover, file_size, file_mtime, missing_since
 		 FROM comics WHERE id = ?`, id,
 	).Scan(&c.ID, &c.Path, &c.Title, &c.Series, &c.Volume, &c.Issue,
-		&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.FileMtime)
+		&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.FileMtime, &missing)
+	if missing.Valid {
+		t := missing.Time
+		c.MissingSince = &t
+	}
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -337,11 +348,12 @@ type ListComicsParams struct {
 	Sort          string  // title | series | date_added | last_read | position
 	Order         string  // asc | desc
 	Format        string
-	LabelIDs      []int64 // empty = no filter; multiple = comic must have ALL of these
-	CollectionIDs []int64 // empty = no filter; multiple = comic must be in ALL of these
-	UnreadOnly    bool    // hide comics where last_page >= page_count
-	Page          int
-	PerPage       int
+	LabelIDs       []int64 // empty = no filter; multiple = comic must have ALL of these
+	CollectionIDs  []int64 // empty = no filter; multiple = comic must be in ALL of these
+	UnreadOnly     bool    // hide comics where last_page >= page_count
+	IncludeMissing bool    // also return comics with non-null missing_since (Settings toggle)
+	Page           int
+	PerPage        int
 }
 
 func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
@@ -367,11 +379,16 @@ func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
 	}
 
 	args := []any{p.UserID}
-	// Hide comics whose files were missing during the last successful
-	// scan of their root. They stay in the DB so user state (progress,
-	// labels, collections) survives — but they're not surfaced in
-	// listings until the file reappears.
-	where := "WHERE c.missing_since IS NULL"
+	// By default, hide comics whose files were missing during the last
+	// successful scan of their root. They stay in the DB so user state
+	// (progress, labels, collections) survives — they're just not
+	// surfaced. The IncludeMissing flag (Settings → Missing files
+	// toggle) opts in to seeing them in the library so the user can
+	// inspect or remove them.
+	where := "WHERE 1=1"
+	if !p.IncludeMissing {
+		where += " AND c.missing_since IS NULL"
+	}
 	if p.Search != "" {
 		where += " AND (c.title LIKE ? OR c.series LIKE ?)"
 		args = append(args, "%"+p.Search+"%", "%"+p.Search+"%")
@@ -431,7 +448,7 @@ func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
 	offset := (p.Page - 1) * p.PerPage
 	rows, err := d.db.Query(
 		fmt.Sprintf(`SELECT c.id, c.path, c.title, c.series, c.volume, c.issue,
-			c.format, c.page_count, c.cover_path, c.custom_cover, c.file_size, c.date_added, c.file_mtime,
+			c.format, c.page_count, c.cover_path, c.custom_cover, c.file_size, c.date_added, c.file_mtime, c.missing_since,
 			rp.last_page, rp.last_cfi, rp.updated_at
 			%s ORDER BY %s %s LIMIT ? OFFSET ?`, base, sortExpr, order),
 		append(args, p.PerPage, offset)...,
@@ -444,12 +461,17 @@ func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
 	var out []*ComicWithProgress
 	for rows.Next() {
 		c := &ComicWithProgress{}
+		var missing sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.Path, &c.Title, &c.Series, &c.Volume, &c.Issue,
-			&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.DateAdded, &c.FileMtime,
+			&c.Format, &c.PageCount, &c.CoverPath, &c.CustomCover, &c.FileSize, &c.DateAdded, &c.FileMtime, &missing,
 			&c.LastPage, &c.LastCFI, &c.ProgressUpdatedAt,
 		); err != nil {
 			return nil, 0, err
+		}
+		if missing.Valid {
+			t := missing.Time
+			c.MissingSince = &t
 		}
 		out = append(out, c)
 	}
@@ -761,12 +783,17 @@ func (d *DB) LabelsForComics(userID int64, comicIDs []int64) (map[int64][]*Label
 func (d *DB) ListCollections(userID int64) ([]*Collection, error) {
 	rows, err := d.db.Query(`
 		SELECT c.id, c.name, c.created_at,
-		       (SELECT COUNT(*) FROM collection_comics WHERE collection_id = c.id) AS comic_count,
+		       (SELECT COUNT(*) FROM collection_comics cc
+		           JOIN comics cm ON cm.id = cc.comic_id
+		         WHERE cc.collection_id = c.id
+		           AND cm.missing_since IS NULL
+		       ) AS comic_count,
 		       (SELECT COUNT(*) FROM collection_comics cc
 		           JOIN comics cm ON cm.id = cc.comic_id
 		           LEFT JOIN reading_progress rp
 		             ON rp.comic_id = cm.id AND rp.user_id = c.user_id
 		         WHERE cc.collection_id = c.id
+		           AND cm.missing_since IS NULL
 		           AND (rp.last_page IS NULL OR cm.page_count = 0 OR rp.last_page < cm.page_count)
 		       ) AS unread_count,
 		       COALESCE((

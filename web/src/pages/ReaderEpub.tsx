@@ -354,15 +354,10 @@ export default function ReaderEpub() {
       // here is fresher than anything the queue's in-flight save can carry,
       // so the server's seq-gated upsert guarantees this write wins.
       if (readyRef.current && cfiRef.current) {
-        const body = JSON.stringify({
-          last_page: pctRef.current,
-          last_cfi: cfiRef.current,
-          seq: Date.now(),
-        })
-        navigator.sendBeacon(
-          `/api/comics/${comicId}/progress`,
-          new Blob([body], { type: 'application/json' }),
-        )
+        // api.finalSaveProgress handles the same three things
+        // navigator.sendBeacon doesn't: configured baseUrl,
+        // Bearer header, and offline-queue fallback.
+        api.finalSaveProgress(comicId, pctRef.current, cfiRef.current, Date.now())
       }
       rendition.destroy()
       book.destroy()

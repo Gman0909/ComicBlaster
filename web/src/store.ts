@@ -38,6 +38,13 @@ interface AppState {
   // again. Never true in the browser deployment.
   offlineMode: boolean
   setOfflineMode: (v: boolean) => void
+  // User-controlled filter: when true the library view shows ONLY
+  // comics downloaded for offline reading. Distinct from
+  // offlineMode (which is an automatic state set when the server
+  // is unreachable). Persisted so the user's preference survives
+  // reloads. Native-only; the toolbar button hides in browsers.
+  offlineOnly: boolean
+  setOfflineOnly: (v: boolean) => void
   // Library UI state — persisted so opening a comic and coming back keeps
   // the user's place (search, sort, active filters, scroll).
   library: LibraryUiState
@@ -81,6 +88,8 @@ export const useStore = create<AppState>()(
       setShowMissing: (showMissing) => set({ showMissing }),
       offlineMode: false,
       setOfflineMode: (offlineMode) => set({ offlineMode }),
+      offlineOnly: false,
+      setOfflineOnly: (offlineOnly) => set({ offlineOnly }),
 
       library: defaultLibrary,
       setLibrarySearch: (q) =>
@@ -119,6 +128,7 @@ export const useStore = create<AppState>()(
         libraryView: s.libraryView,
         unreadOnly: s.unreadOnly,
         showMissing: s.showMissing,
+        offlineOnly: s.offlineOnly,
         // user is persisted so offline-mode bootstrap has a name
         // to show in the profile menu. Server-side role is the
         // authority; admin sections gate on it but their endpoints

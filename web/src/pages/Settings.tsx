@@ -1249,11 +1249,30 @@ function AboutSection() {
     queryFn: () => api.version(),
     staleTime: 60_000,
   })
+  // In the native client, also read the client-side build tag via
+  // the Wails bridge. Otherwise the About section only shows the
+  // server version, and a freshly-upgraded client still reads as
+  // whatever the connected server's version is — which surprised
+  // users testing native releases.
+  const [clientVersion, setClientVersion] = useState<string>('')
+  useEffect(() => {
+    const br = bridge()
+    if (!br) return
+    let cancelled = false
+    br.Version().then((v) => { if (!cancelled) setClientVersion(v) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   return (
     <section>
       <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1">About</h2>
       <p className="text-xs text-[var(--color-text-muted)]">
-        ComicBlaster <span className="font-mono text-[var(--color-text)]">{data?.version ?? '…'}</span>
+        Server <span className="font-mono text-[var(--color-text)]">{data?.version ?? '…'}</span>
+        {clientVersion && (
+          <>
+            {' · '}
+            Client <span className="font-mono text-[var(--color-text)]">{clientVersion}</span>
+          </>
+        )}
         {' · '}
         <a
           href="https://github.com/Gman0909/ComicBlaster"

@@ -348,15 +348,13 @@ export default function Reader() {
   useEffect(() => {
     const send = () => {
       if (pageRef.current < 1) return
-      const body = JSON.stringify({
-        last_page: pageRef.current,
-        last_cfi: '',
-        seq: Date.now(),
-      })
-      navigator.sendBeacon(
-        `/api/comics/${comicId}/progress`,
-        new Blob([body], { type: 'application/json' }),
-      )
+      // api.finalSaveProgress handles three things sendBeacon
+      // doesn't: it routes the request through the configured
+      // baseUrl (so the native client targets the actual server,
+      // not its own wails:// origin), attaches the Bearer token
+      // when needed, and falls back to the offline progress
+      // queue when the network can't be reached.
+      api.finalSaveProgress(comicId, pageRef.current, '', Date.now())
     }
     window.addEventListener('beforeunload', send)
     return () => {

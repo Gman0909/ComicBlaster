@@ -570,6 +570,7 @@ export default function Library() {
     libraryView, setLibraryView,
     unreadOnly, setUnreadOnly,
     showMissing, offlineMode, setOfflineMode,
+    offlineOnly, setOfflineOnly,
     library, setLibrarySearch, setLibrarySort, setLibraryOrder,
     toggleLabelFilter, toggleCollectionFilter, clearLibraryFilters, setLibraryScroll,
     lastOpenedComicId, setLastOpenedComicId,
@@ -702,7 +703,15 @@ export default function Library() {
     ? collections.filter((c) => c.name.toLowerCase().includes(chipQueryLower))
     : collections
 
-  const comics = data?.comics ?? []
+  const rawComics = data?.comics ?? []
+  // Client-side filter for "show only downloaded". Done here rather
+  // than in the server-side query because "is in my local manifest"
+  // is purely client knowledge. Hidden by default — the toolbar
+  // button is gated on offlineState.available so the filter is
+  // never silently active in the browser deployment.
+  const comics = offlineOnly
+    ? rawComics.filter((c) => offlineState.entries.has(c.id))
+    : rawComics
   const rowCount = Math.ceil(comics.length / cols)
 
   // Click on a card: modifier-aware multi-select. Without a modifier, opens the
@@ -1000,6 +1009,21 @@ export default function Library() {
         )}
 
         <div className="flex items-center gap-1 ml-auto">
+          {offlineState.available && (
+            <button
+              onClick={() => setOfflineOnly(!offlineOnly)}
+              title={offlineOnly ? 'Showing only downloaded — click to show all' : 'Show only downloaded comics'}
+              aria-label="Toggle downloaded-only filter"
+              aria-pressed={offlineOnly}
+              className={`p-2.5 rounded-md transition-colors ${
+                offlineOnly
+                  ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                  : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              <HardDriveDownload size={16} />
+            </button>
+          )}
           <button
             onClick={() => setUnreadOnly(!unreadOnly)}
             title={unreadOnly ? 'Showing only unread — click to show all' : 'Show only unread'}

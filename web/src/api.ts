@@ -196,6 +196,49 @@ function queueProgress(comicID: number, payload: { last_page: number; last_cfi: 
   } catch { /* localStorage full / quotaExceeded — silently drop */ }
 }
 
+/** finalSaveProgress is the unmount / beforeunload safety net for
+ *  the reader. Two differences from the regular saveProgress:
+ *
+ *    1. Uses fetch(keepalive: true) instead of navigator.sendBeacon.
+ *       sendBeacon is fire-and-forget, doesn't support custom
+ *       headers, and resolves the URL against the page's origin —
+ *       in the native client that origin is wails://wails.localhost,
+ *       so a relative /api/comics/N/progress path would 404.
+ *       fetch(keepalive: true) survives unload + lets us prefix the
+ *       configured baseUrl + attach the Bearer header.
+ *
+ *    2. When offlineMode is set, the payload is queued locally
+ *       instead of attempted — same wrapper as saveProgress.
+ *
+ *  Synchronous from the caller's perspective; the network attempt
+ *  is fire-and-forget but the queue write (the offline path) is
+ *  done before return. */
+export function finalSaveProgress(comicId: number, last_page: number, last_cfi: string, seq: number): void {
+  const payload = { last_page, last_cfi, seq }
+  if (offlineModeGetter()) {
+    queueProgress(comicId, payload)
+    return
+  }
+  const url = apiUrl(`/api/comics/${comicId}/progress`)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiConfig.auth === 'bearer') {
+    const t = apiConfig.getToken()
+    if (t) headers['Authorization'] = `Bearer ${t}`
+  }
+  fetch(url, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers,
+    keepalive: true,
+    credentials: apiConfig.auth === 'bearer' ? 'omit' : 'include',
+  }).catch(() => {
+    // Network failed between our offlineMode check and the call —
+    // queue locally so the next drain catches it. Async catch so
+    // even though we returned, the localStorage write still happens.
+    queueProgress(comicId, payload)
+  })
+}
+
 /** Drain the queue by POSTing every pending entry. Called by
  *  AuthGuard on the offline→online transition. Returns the count of
  *  entries that successfully reached the server. */
@@ -315,6 +358,9 @@ export const api = {
     }
     return req<void>('POST', `/api/comics/${id}/progress`, payload)
   },
+  // Exposed on the api object for callers who already pull `api`
+  // in; the underlying function is also exported standalone.
+  finalSaveProgress,
   // Backfill page_count for formats the scanner can't enumerate server-side
   // (PDF reports its real numPages once pdf.js opens the doc; ePub posts 100
   // so the existing pct formula doubles as a percentage display).

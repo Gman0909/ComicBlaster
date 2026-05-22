@@ -114,9 +114,11 @@ func (s *server) handleUnignorePath(w http.ResponseWriter, r *http.Request) {
 
 // --- comic removal (admin) ---
 
-// handleRemoveComic deletes a comic from the library. By default it also adds
-// the file path to the ignore list so future scans won't re-add it. With
-// ?delete_file=1, the file itself is removed from disk.
+// handleRemoveComic removes a comic from the library. By default it also
+// adds the file path to the ignore list so future scans won't re-add it.
+// With ?delete_file=1, the file itself is deleted from disk — and in that
+// case the ignore list is skipped because there's nothing left to ignore
+// (the file is gone, scans can't find it on the next pass).
 func (s *server) handleRemoveComic(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -132,6 +134,11 @@ func (s *server) handleRemoveComic(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ignore := q.Get("ignore") != "0" // default true
 	deleteFile := q.Get("delete_file") == "1"
+	// File deletion makes the ignore-list entry redundant — keeping it
+	// would just leave a stale row pointing to a now-nonexistent path.
+	if deleteFile {
+		ignore = false
+	}
 
 	if ignore {
 		if err := s.db.AddIgnoredPath(c.Path); err != nil {

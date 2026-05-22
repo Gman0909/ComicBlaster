@@ -18,7 +18,11 @@ export default function RemoveComicModal({ comic, onClose }: Props) {
     setWorking(true)
     setErr('')
     try {
-      await api.removeComic(comic.id, { ignore: true, deleteFile })
+      // When deleting the file from disk, skip the ignore list — the file
+      // is gone, so there's nothing for future scans to skip. The server
+      // enforces this too (handleRemoveComic forces ignore=false when
+      // delete_file=1) but being explicit keeps the contract obvious.
+      await api.removeComic(comic.id, { ignore: !deleteFile, deleteFile })
       queryClient.invalidateQueries({ queryKey: ['comics'] })
       queryClient.invalidateQueries({ queryKey: ['ignoredPaths'] })
       onClose()
@@ -46,7 +50,10 @@ export default function RemoveComicModal({ comic, onClose }: Props) {
         </div>
 
         <p className="text-sm text-[var(--color-text-muted)] leading-snug">
-          <span className="text-[var(--color-text)] font-medium">{comic.title}</span> will be hidden and added to the ignore list so future scans skip it. You can restore it from Settings → Ignored items.
+          <span className="text-[var(--color-text)] font-medium">{comic.title}</span>{' '}
+          {deleteFile
+            ? 'will be removed from the library and the file deleted from disk. This cannot be undone.'
+            : 'will be removed from the library and added to the ignore list so future scans skip it. You can restore it from Settings → Ignored items.'}
         </p>
 
         <label className="flex items-start gap-3 cursor-pointer select-none p-3 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-overlay)] transition-colors">
@@ -82,7 +89,7 @@ export default function RemoveComicModal({ comic, onClose }: Props) {
             disabled={working}
             className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${deleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]'}`}
           >
-            {working ? 'Removing…' : deleteFile ? 'Delete forever' : 'Hide'}
+            {working ? 'Removing…' : deleteFile ? 'Delete forever' : 'Remove'}
           </button>
         </div>
       </div>

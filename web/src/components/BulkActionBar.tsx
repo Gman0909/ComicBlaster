@@ -10,14 +10,14 @@ const LABEL_PALETTE = ['#6366f1', '#ec4899', '#f97316', '#eab308', '#22c55e', '#
 interface Props {
   selected: Comic[]
   selectedCollections?: Collection[]
-  canHide: boolean       // admin only
+  canRemove: boolean     // admin only
   onClear: () => void
 }
 
-type Popover = 'labels' | 'collections' | 'hide' | null
+type Popover = 'labels' | 'collections' | 'remove' | null
 
 // Fetch every comic ID inside the given collections. Used at action time so
-// label/hide operations from the collections view affect every contained comic.
+// label/remove operations from the collections view affect every contained comic.
 async function expandCollectionComicIds(cols: Collection[]): Promise<number[]> {
   const ids = new Set<number>()
   for (const col of cols) {
@@ -29,7 +29,7 @@ async function expandCollectionComicIds(cols: Collection[]): Promise<number[]> {
   return [...ids]
 }
 
-export default function BulkActionBar({ selected, selectedCollections = [], canHide, onClear }: Props) {
+export default function BulkActionBar({ selected, selectedCollections = [], canRemove, onClear }: Props) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState<Popover>(null)
   const [busy, setBusy] = useState(false)
@@ -143,13 +143,16 @@ export default function BulkActionBar({ selected, selectedCollections = [], canH
     }
   }
 
-  const [hideDeleteFile, setHideDeleteFile] = useState(false)
-  async function bulkHide() {
+  const [removeDeleteFile, setRemoveDeleteFile] = useState(false)
+  async function bulkRemove() {
     setBusy(true)
     try {
       const targets = await resolveTargetIds()
       await Promise.all(targets.map((id) =>
-        api.removeComic(id, { ignore: true, deleteFile: hideDeleteFile }).catch(() => {})
+        // ignore is the inverse of deleteFile: if the file is being
+        // deleted from disk, the ignore-list entry would be a stale
+        // pointer to nothing. Server enforces this too.
+        api.removeComic(id, { ignore: !removeDeleteFile, deleteFile: removeDeleteFile }).catch(() => {})
       ))
       invalidateAll()
       setOpen(null)
@@ -192,14 +195,14 @@ export default function BulkActionBar({ selected, selectedCollections = [], canH
               onClick={() => setOpen(open === 'collections' ? null : 'collections')}
             />
           )}
-          {canHide && (
+          {canRemove && (
             <ActionButton
               icon={<Trash2 size={18} />}
-              label="Hide"
-              active={open === 'hide'}
+              label="Remove"
+              active={open === 'remove'}
               danger
               disabled={!hasSelection}
-              onClick={() => setOpen(open === 'hide' ? null : 'hide')}
+              onClick={() => setOpen(open === 'remove' ? null : 'remove')}
             />
           )}
           <button
@@ -291,32 +294,38 @@ export default function BulkActionBar({ selected, selectedCollections = [], canH
           </div>
         )}
 
-        {open === 'hide' && (
+        {open === 'remove' && (
           <div className="p-3 border-t border-[var(--color-border)] space-y-3">
             <p className="text-sm text-[var(--color-text-muted)] leading-snug">
               {isCollectionMode ? (
                 <>
-                  Hide every comic in{' '}
+                  Remove every comic in{' '}
                   <span className="text-[var(--color-text)] font-medium">
                     {selectedCollections.length} collection{selectedCollections.length === 1 ? '' : 's'}
                   </span>{' '}
-                  from the library. The collections themselves stay; only their comics are added to the ignore list.
+                  from the library.
+                  {removeDeleteFile
+                    ? ' Files will be deleted from disk; this cannot be undone.'
+                    : ' The collections themselves stay; their comics are added to the ignore list.'}
                 </>
               ) : (
                 <>
-                  Hide <span className="text-[var(--color-text)] font-medium">{selected.length} comic{selected.length === 1 ? '' : 's'}</span> from the library. They'll be added to the ignore list so future scans skip them.
+                  Remove <span className="text-[var(--color-text)] font-medium">{selected.length} comic{selected.length === 1 ? '' : 's'}</span> from the library.
+                  {removeDeleteFile
+                    ? ' Files will be deleted from disk; this cannot be undone.'
+                    : " They'll be added to the ignore list so future scans skip them."}
                 </>
               )}
             </p>
             <label className="flex items-start gap-3 cursor-pointer select-none p-2.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-overlay)] transition-colors">
               <input
                 type="checkbox"
-                checked={hideDeleteFile}
-                onChange={(e) => setHideDeleteFile(e.target.checked)}
+                checked={removeDeleteFile}
+                onChange={(e) => setRemoveDeleteFile(e.target.checked)}
                 className="mt-0.5 w-4 h-4 accent-red-500 shrink-0"
               />
               <p className="text-sm text-[var(--color-text)] flex items-center gap-1.5">
-                {hideDeleteFile && <AlertTriangle size={14} className="text-red-400 shrink-0" />}
+                {removeDeleteFile && <AlertTriangle size={14} className="text-red-400 shrink-0" />}
                 Also delete files from disk
               </p>
             </label>
@@ -329,15 +338,15 @@ export default function BulkActionBar({ selected, selectedCollections = [], canH
                 Cancel
               </button>
               <button
-                onClick={bulkHide}
+                onClick={bulkRemove}
                 disabled={busy}
-                className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${hideDeleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]'}`}
+                className={`flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${removeDeleteFile ? 'bg-red-600 hover:bg-red-500' : 'bg-[var(--color-accent-strong)] hover:bg-[var(--color-accent-hover)]'}`}
               >
                 {busy
                   ? 'Working…'
                   : isCollectionMode
-                    ? (hideDeleteFile ? 'Delete contents forever' : 'Hide contents')
-                    : (hideDeleteFile ? `Delete ${selected.length} forever` : `Hide ${selected.length}`)}
+                    ? (removeDeleteFile ? 'Delete contents forever' : 'Remove contents')
+                    : (removeDeleteFile ? `Delete ${selected.length} forever` : `Remove ${selected.length}`)}
               </button>
             </div>
           </div>

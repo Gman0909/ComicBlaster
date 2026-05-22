@@ -1072,7 +1072,7 @@ export default function Library() {
         <BulkActionBar
           selected={selectedComics}
           selectedCollections={selectedCollections}
-          canHide={isAdmin}
+          canRemove={isAdmin}
           onClear={clearSelection}
         />
       )}

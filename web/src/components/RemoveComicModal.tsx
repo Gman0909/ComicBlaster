@@ -22,9 +22,21 @@ export default function RemoveComicModal({ comic, onClose }: Props) {
       // is gone, so there's nothing for future scans to skip. The server
       // enforces this too (handleRemoveComic forces ignore=false when
       // delete_file=1) but being explicit keeps the contract obvious.
-      await api.removeComic(comic.id, { ignore: !deleteFile, deleteFile })
+      const res = await api.removeComic(comic.id, { ignore: !deleteFile, deleteFile })
       queryClient.invalidateQueries({ queryKey: ['comics'] })
       queryClient.invalidateQueries({ queryKey: ['ignoredPaths'] })
+      // Partial-success: the DB row is gone but the file delete
+      // step failed (typical cause: a systemd-hardened unit where
+      // the library mount isn't in ReadWritePaths). The server has
+      // auto-added the path to the ignore list so the comic won't
+      // reappear on the next scan, but the file is still on disk
+      // and the user needs to either fix the permission or remove
+      // it manually — surface that.
+      if (res && res.file_warn) {
+        setErr(`Library entry removed and ignored, but the file is still on disk: ${res.file_warn}`)
+        setWorking(false)
+        return
+      }
       onClose()
     } catch (e: any) {
       setErr(e.message ?? 'Failed to remove')

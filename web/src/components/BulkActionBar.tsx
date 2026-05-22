@@ -144,19 +144,33 @@ export default function BulkActionBar({ selected, selectedCollections = [], canR
   }
 
   const [removeDeleteFile, setRemoveDeleteFile] = useState(false)
+  const [removeWarn, setRemoveWarn] = useState('')
   async function bulkRemove() {
     setBusy(true)
+    setRemoveWarn('')
     try {
       const targets = await resolveTargetIds()
-      await Promise.all(targets.map((id) =>
-        // ignore is the inverse of deleteFile: if the file is being
-        // deleted from disk, the ignore-list entry would be a stale
-        // pointer to nothing. Server enforces this too.
-        api.removeComic(id, { ignore: !removeDeleteFile, deleteFile: removeDeleteFile }).catch(() => {})
+      // ignore is the inverse of deleteFile: if the file is being
+      // deleted from disk, the ignore-list entry would be a stale
+      // pointer to nothing. Server enforces this too.
+      const results = await Promise.all(targets.map((id) =>
+        api.removeComic(id, { ignore: !removeDeleteFile, deleteFile: removeDeleteFile })
+          .then((r) => ({ ok: true as const, r }))
+          .catch(() => ({ ok: false as const, r: undefined }))
       ))
       invalidateAll()
-      setOpen(null)
-      onClear()
+      // Count partial-success cases — DB row gone but file delete
+      // failed (server auto-added the path to ignore list so the
+      // comic won't reappear on next scan, but the file is still
+      // on disk).
+      const fileFailures = results.filter((r) => r.ok && r.r && r.r.file_warn).length
+      if (fileFailures > 0) {
+        setRemoveWarn(`Removed ${results.length} from the library, but ${fileFailures} file${fileFailures === 1 ? '' : 's'} couldn't be deleted from disk (permission / sandbox issue). Those paths were added to the ignore list so they won't reappear.`)
+        // Don't close the popover — let the user see the warning.
+      } else {
+        setOpen(null)
+        onClear()
+      }
     } finally {
       setBusy(false)
     }
@@ -329,6 +343,11 @@ export default function BulkActionBar({ selected, selectedCollections = [], canR
                 Also delete files from disk
               </p>
             </label>
+            {removeWarn && (
+              <p role="alert" className="text-xs text-amber-400 leading-snug border border-amber-500/30 bg-amber-500/10 rounded-md px-2.5 py-2">
+                {removeWarn}
+              </p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => setOpen(null)}

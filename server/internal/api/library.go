@@ -201,12 +201,22 @@ func (s *server) handleRemoveComic(w http.ResponseWriter, r *http.Request) {
 	}
 	if deleteFile {
 		if err := os.Remove(c.Path); err != nil {
-			// File deletion is best-effort; still report the deletion as a success
-			// since the DB entry is gone. Surface a soft warning.
+			// File deletion failed (typical causes: the path lives
+			// outside ReadWritePaths in a systemd-hardened unit so
+			// the kernel returns EROFS, or the underlying mount
+			// rejects the call). The DB entry is already gone, but
+			// without intervention the next scan would re-add the
+			// file. Add it to the ignore list as a safety net so
+			// the library state stays consistent with the user's
+			// stated intent ("get this comic out of the library"),
+			// then surface the warning so the client can tell them
+			// to fix the permission and delete the file manually.
+			_ = s.db.AddIgnoredPath(c.Path)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"removed":     true,
 				"file_warn":   err.Error(),
 				"file_delete": false,
+				"ignored":     true,
 			})
 			return
 		}

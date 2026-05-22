@@ -67,6 +67,17 @@ export interface MissingComic {
   missing_since: string
 }
 
+// Returned by api.removeComic when the file delete step couldn't
+// complete. The DB row is still gone (removed: true), the path has
+// been added to the ignore list as a safety net (ignored: true), but
+// the file itself is still on disk — surface file_warn to the user.
+export interface RemoveComicResult {
+  removed: boolean
+  file_warn?: string
+  file_delete?: boolean
+  ignored?: boolean
+}
+
 export interface User {
   id: number
   username: string
@@ -276,12 +287,19 @@ export const api = {
     req<BrowseResponse>('GET', `/api/admin/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
   mkdir: (parent: string, name: string) =>
     req<{ path: string }>('POST', '/api/admin/browse/mkdir', { path: parent, name }),
+  // Returns undefined (HTTP 204) for a clean delete, OR a partial-
+  // success object when delete_file was requested but the file
+  // couldn't be removed (sandbox / permission / EROFS). In that
+  // case the DB row is gone, the path is auto-added to the ignore
+  // list as a safety net (so the next scan doesn't re-add the
+  // comic), and the caller is expected to surface file_warn to
+  // the user.
   removeComic: (id: number, opts: { ignore?: boolean; deleteFile?: boolean } = {}) => {
     const params = new URLSearchParams()
     if (opts.ignore === false) params.set('ignore', '0')
     if (opts.deleteFile) params.set('delete_file', '1')
     const qs = params.toString()
-    return req<void>('DELETE', `/api/admin/comics/${id}${qs ? `?${qs}` : ''}`)
+    return req<RemoveComicResult | undefined>('DELETE', `/api/admin/comics/${id}${qs ? `?${qs}` : ''}`)
   },
 
   // labels

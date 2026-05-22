@@ -190,6 +190,13 @@ func (d *DB) migrate() error {
 	d.db.Exec(`ALTER TABLE reading_progress ADD COLUMN last_cfi TEXT NOT NULL DEFAULT ''`)
 	// Add monotonic seq column for ordering concurrent progress writes.
 	d.db.Exec(`ALTER TABLE reading_progress ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`)
+	// Soft-delete column. The scanner sets this on rows whose files
+	// weren't seen during a successful scan of an available root;
+	// clears it when the file reappears. Hard-delete (and the FK
+	// CASCADE that erases reading_progress / labels / collection
+	// memberships with it) is gated on the column being older than
+	// a long grace period — see scanner.Scan.
+	d.db.Exec(`ALTER TABLE comics ADD COLUMN missing_since DATETIME NULL`)
 	return nil
 }
 
@@ -360,7 +367,11 @@ func (d *DB) ListComics(p ListComicsParams) ([]*ComicWithProgress, int, error) {
 	}
 
 	args := []any{p.UserID}
-	where := "WHERE 1=1"
+	// Hide comics whose files were missing during the last successful
+	// scan of their root. They stay in the DB so user state (progress,
+	// labels, collections) survives — but they're not surfaced in
+	// listings until the file reappears.
+	where := "WHERE c.missing_since IS NULL"
 	if p.Search != "" {
 		where += " AND (c.title LIKE ? OR c.series LIKE ?)"
 		args = append(args, "%"+p.Search+"%", "%"+p.Search+"%")
@@ -465,6 +476,70 @@ func (d *DB) AllComicPaths() ([]string, error) {
 func (d *DB) DeleteComicByPath(path string) error {
 	_, err := d.db.Exec(`DELETE FROM comics WHERE path = ?`, path)
 	return err
+}
+
+// MarkMissing records that a previously-known comic file wasn't
+// observed during the latest scan. The actual row is left in place so
+// the FK CASCADE doesn't wipe reading_progress / comic_labels /
+// collection_comics. Idempotent — repeated calls keep the original
+// missing_since timestamp so the grace-period clock doesn't reset.
+func (d *DB) MarkMissing(path string, ts time.Time) error {
+	_, err := d.db.Exec(
+		`UPDATE comics SET missing_since = ? WHERE path = ? AND missing_since IS NULL`,
+		ts.UTC(), path,
+	)
+	return err
+}
+
+// ClearMissing wipes the missing flag — used by the scanner when a
+// file reappears at the same path (NAS came back, mount remounted,
+// whatever).
+func (d *DB) ClearMissing(path string) error {
+	_, err := d.db.Exec(
+		`UPDATE comics SET missing_since = NULL WHERE path = ? AND missing_since IS NOT NULL`,
+		path,
+	)
+	return err
+}
+
+// PurgeMissingOlderThan hard-deletes rows whose missing_since is older
+// than the cutoff. This is the only place CASCADE is allowed to fire
+// from a "file not found" trigger. Returns the number of rows deleted.
+func (d *DB) PurgeMissingOlderThan(cutoff time.Time) (int, error) {
+	res, err := d.db.Exec(
+		`DELETE FROM comics WHERE missing_since IS NOT NULL AND missing_since < ?`,
+		cutoff.UTC(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// AllComicPathsWithMissing returns every (path, missing_since) tuple
+// for the scanner's sweep pass.
+func (d *DB) AllComicPathsWithMissing() (map[string]*time.Time, error) {
+	rows, err := d.db.Query(`SELECT path, missing_since FROM comics`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]*time.Time)
+	for rows.Next() {
+		var p string
+		var ts sql.NullTime
+		if err := rows.Scan(&p, &ts); err != nil {
+			return nil, err
+		}
+		if ts.Valid {
+			t := ts.Time
+			out[p] = &t
+		} else {
+			out[p] = nil
+		}
+	}
+	return out, rows.Err()
 }
 
 // SetComicPageCount lets the client backfill page_count for formats the

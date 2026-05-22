@@ -84,11 +84,41 @@ func (s *Scanner) Scan() {
 	log.Printf("scanner: scan started (%d paths, %d ignored)", len(paths), len(ignored))
 	found := map[string]bool{}
 
+	// Per-root outcome. A root counts as "scanned successfully" only if
+	// we could ReadDir it AND it returned at least one entry. The
+	// existence of the missing-flag clock means a temporary outage
+	// (CIFS mount goes stale, NAS reboots, etc.) leaves user state
+	// untouched: comics under an unscannable root are skipped entirely
+	// in the sweep below, neither marked missing nor deleted.
+	//
+	// os.Stat alone is not enough — a stale CIFS mountpoint inode
+	// satisfies Stat without the kernel ever talking to the NAS. The
+	// observed failure mode: filepath.WalkDir silently returns zero
+	// entries, the original code interpreted that as "all comics
+	// deleted", and the FK CASCADE wiped every reading_progress /
+	// comic_labels / collection_comics row in the DB.
+	type rootResult struct {
+		path string
+		ok   bool // true iff we trust this root's "missing" inference
+	}
+	results := make([]rootResult, 0, len(paths))
+
 	for _, root := range paths {
-		if _, err := os.Stat(root); err != nil {
-			log.Printf("scanner: path unavailable %s: %v", root, err)
+		entries, derr := os.ReadDir(root)
+		if derr != nil {
+			log.Printf("scanner: skip root %s (readdir: %v)", root, derr)
+			results = append(results, rootResult{path: root, ok: false})
 			continue
 		}
+		if len(entries) == 0 {
+			// Could be a legit empty library OR a stale mount that
+			// reads as empty. Either way: don't trust this scan to
+			// imply existing comics are missing.
+			log.Printf("scanner: skip root %s (empty — treating as unavailable for missing-sweep)", root)
+			results = append(results, rootResult{path: root, ok: false})
+			continue
+		}
+
 		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
@@ -108,17 +138,55 @@ func (s *Scanner) Scan() {
 			s.processFile(path)
 			return nil
 		})
+		results = append(results, rootResult{path: root, ok: true})
 	}
 
-	existing, _ := s.db.AllComicPaths()
-	for _, path := range existing {
-		if !found[path] {
-			log.Printf("scanner: removing missing file %s", path)
+	// Missing sweep. Only acts on comics whose root scanned OK; for
+	// roots that failed (mount stale, dir empty, etc.) we deliberately
+	// do nothing — better to leave a stale row than wipe user state.
+	existing, _ := s.db.AllComicPathsWithMissing()
+	now := time.Now().UTC()
+	const grace = 30 * 24 * time.Hour // hard-delete only after a month
+
+	// underRoot reports whether `path` lives under a root whose scan
+	// we trust this pass. Inlined as a closure rather than a package
+	// function because rootResult is local to Scan.
+	underRoot := func(path string) bool {
+		for _, r := range results {
+			if !r.ok {
+				continue
+			}
+			if path == r.path || strings.HasPrefix(path, r.path+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for path, missingSince := range existing {
+		if found[path] {
+			// File is present this scan — clear any stale missing
+			// flag so it shows up in the library again.
+			if missingSince != nil {
+				log.Printf("scanner: %s back from missing", path)
+				s.db.ClearMissing(path)
+			}
+			continue
+		}
+		if !underRoot(path) {
+			continue // skip — see rootResult comment above
+		}
+		// Root was scanned, file genuinely absent.
+		if missingSince == nil {
+			log.Printf("scanner: marking missing (will purge after %s) %s", grace, path)
+			s.db.MarkMissing(path, now)
+		} else if now.Sub(*missingSince) > grace {
+			log.Printf("scanner: purging long-missing %s", path)
 			s.db.DeleteComicByPath(path)
 		}
 	}
 
-	log.Printf("scanner: scan complete (%d comics)", len(found))
+	log.Printf("scanner: scan complete (%d comics observed)", len(found))
 }
 
 func (s *Scanner) Watch(intervalSecs int) {

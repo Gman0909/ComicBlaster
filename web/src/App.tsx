@@ -1,7 +1,8 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { api, getApiConfig, setOfflineModeGetter, drainProgressQueue } from './api'
+import { useComic } from './hooks/useComic'
 import { useStore } from './store'
 import { isNative, bridge } from './native'
 import Login from './pages/Login'
@@ -30,12 +31,7 @@ function ThemeSync() {
 function ReaderDispatch() {
   const { id } = useParams<{ id: string }>()
   const comicId = Number(id)
-  const { data: comic, isError, error, refetch } = useQuery({
-    queryKey: ['comic', comicId],
-    queryFn: () => api.comic(comicId),
-    retry: 2,
-    retryDelay: 800,
-  })
+  const { data: comic, isError, error, refetch } = useComic(comicId)
   if (isError) {
     return (
       <div className="min-h-dvh w-full bg-black flex items-center justify-center px-6">

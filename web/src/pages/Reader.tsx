@@ -9,6 +9,7 @@ import SetThumbnailModal from '../components/SetThumbnailModal'
 import { FullPageSpinner } from '../components/Spinner'
 import { useFullscreen } from '../hooks/useFullscreen'
 import { useOffline } from '../hooks/useOffline'
+import { useComic } from '../hooks/useComic'
 
 // Resets the zoom/pan transform whenever the page changes — instead of
 // remounting the entire TransformWrapper (which throws away the canvas /
@@ -96,10 +97,11 @@ export default function Reader() {
   const queryClient = useQueryClient()
   const comicId = Number(id)
 
-  const { data: comic } = useQuery({
-    queryKey: ['comic', comicId],
-    queryFn: () => api.comic(comicId),
-  })
+  // Shared offline-aware fetch. ReaderDispatch above us in the
+  // tree calls the same hook with the same id, so this hits the
+  // already-populated react-query cache slot instead of round-
+  // tripping a second time.
+  const { data: comic } = useComic(comicId)
 
   const { data: allLabels = [] } = useQuery({
     queryKey: ['labels'],

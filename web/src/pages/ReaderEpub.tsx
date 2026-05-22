@@ -8,6 +8,7 @@ import { api } from '../api'
 import { FullPageSpinner } from '../components/Spinner'
 import { useFullscreen } from '../hooks/useFullscreen'
 import { useOffline } from '../hooks/useOffline'
+import { useComic } from '../hooks/useComic'
 
 type Theme = 'light' | 'dark' | 'sepia'
 
@@ -39,10 +40,10 @@ export default function ReaderEpub() {
   // mid-read, the new state takes effect on next open.
   const { entries: offlineEntries } = useOffline()
 
-  const { data: comic } = useQuery({
-    queryKey: ['comic', comicId],
-    queryFn: () => api.comic(comicId),
-  })
+  // Shared offline-aware fetch (see hooks/useComic.ts).
+  // ReaderDispatch above us calls the same hook with the same id
+  // and offlineMode, so this resolves from cache.
+  const { data: comic } = useComic(comicId)
   const { data: allLabels = [] } = useQuery({
     queryKey: ['labels'],
     queryFn: () => api.labels(),

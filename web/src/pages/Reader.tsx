@@ -233,7 +233,14 @@ export default function Reader() {
         ),
       }
     })
-    queryClient.setQueryData<Comic>(['comic', comicId], (old) =>
+    // setQueriesData with a partial key matches every query whose
+    // key STARTS with ['comic', comicId] — necessary because
+    // useComic adds offlineMode to its key, so the cache slot is
+    // ['comic', comicId, false] (or true). A direct
+    // setQueryData<Comic>(['comic', comicId], ...) would miss
+    // those, leaving the reader with the stale pre-edit progress
+    // on next mount and the restore re-saving the OLD position.
+    queryClient.setQueriesData<Comic>({ queryKey: ['comic', comicId] }, (old) =>
       old ? { ...old, progress: { ...(old.progress ?? {}), last_page: lastPage, updated_at: now } } : old,
     )
   }, [comicId, queryClient])
@@ -282,10 +289,22 @@ export default function Reader() {
     return q.runner
   }, [comicId])
 
-  // Page changes feed the queue — every change, including landing back on
-  // page 1, so the saved position always matches the user's current view.
+  // Page changes feed the queue — but ONLY after the user has
+  // actually navigated. Without this gate, the initial mount's
+  // page=1 state fires a save before the restore effect can set
+  // page to the user's last position; that save with last_page=1
+  // races the restore save and (since it uses a fresh Date.now()
+  // seq) sometimes wins, clobbering the user's real position on
+  // the server with a 1.
+  //
+  // userMovedRef is set by goTo() — chevron clicks, slider
+  // commits, keyboard arrows, swipes. Restore + initial mount
+  // don't go through goTo, so they don't trigger a save here.
+  // The exit-time finalSaveProgress still fires with the latest
+  // pageRef.current, so a user who opens a comic, reads, and
+  // exits still has their final position recorded.
   useEffect(() => {
-    if (!readyRef.current || page < 1) return
+    if (!userMovedRef.current || page < 1) return
     enqueueSave(page)
   }, [page, enqueueSave])
 

@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { api, getApiConfig, setOfflineModeGetter, drainProgressQueue } from './api'
+import { api, getApiConfig, setOfflineModeGetter, setNetworkErrorHandler, drainProgressQueue } from './api'
 import { useComic } from './hooks/useComic'
 import { useStore } from './store'
 import { isNative, bridge } from './native'
@@ -88,6 +88,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
           setOfflineMode(false)
           drainProgressQueue().catch(() => {})
         }
+        resetNetworkErrorCounter()
       })
       .catch(async (err: any) => {
         if (cancelled) return
@@ -166,6 +167,40 @@ function NativeBootstrap({ children }: { children: React.ReactNode }) {
 // at module load — useStore.getState is reactive-free and safe to
 // call from a non-React context.
 setOfflineModeGetter(() => useStore.getState().offlineMode)
+
+// Network-failure → offline-mode transition. When a connection
+// drops while the app is already open, the existing AuthGuard
+// bootstrap (api.me() once at mount) doesn't re-run, so the UI
+// gets stuck on failed background fetches. This hook flips
+// offlineMode true after a couple of consecutive network errors
+// in the native client — same UX as cold-start offline: banner +
+// cached library + downloaded-comic reading still works. Real
+// HTTP errors (401/403/500) don't fire this — only fetch throws.
+let consecutiveNetErrors = 0
+const NET_ERROR_THRESHOLD = 2  // flip after the second consecutive failure
+setNetworkErrorHandler(() => {
+  if (!isNative()) return
+  const state = useStore.getState()
+  if (state.offlineMode) return  // already there; ignore
+  consecutiveNetErrors++
+  if (consecutiveNetErrors < NET_ERROR_THRESHOLD) return
+  // Only flip if there's something to fall back to. No downloads =
+  // offline mode is pointless; let the user see the actual error
+  // and decide.
+  const br = bridge()
+  if (!br) return
+  br.ListDownloads().then((dl) => {
+    if (dl && dl.length > 0 && !useStore.getState().offlineMode) {
+      state.setOfflineMode(true)
+    }
+  }).catch(() => {})
+})
+// Successful api.me() in AuthGuard clears offlineMode AND the
+// counter, so a brief blip followed by a recovery doesn't leave a
+// stale increment lying around.
+// (counter reset done in AuthGuard below, just below the
+//  setOfflineMode(false) call.)
+export function resetNetworkErrorCounter(): void { consecutiveNetErrors = 0 }
 
 export default function App() {
   return (

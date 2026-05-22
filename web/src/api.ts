@@ -181,6 +181,17 @@ export function setOfflineModeGetter(fn: () => boolean): void {
   offlineModeGetter = fn
 }
 
+// Network-failure hook. Triggered by the `req` helper when a fetch
+// throws (no HTTP status, i.e. real network error). App.tsx wires
+// this to a debounced "if we have downloads, flip to offlineMode"
+// transition — so a connection that drops while the app is already
+// open swaps to the cached library + downloaded comics path instead
+// of leaving the UI stuck on failed requests.
+let onNetworkError: () => void = () => {}
+export function setNetworkErrorHandler(fn: () => void): void {
+  onNetworkError = fn
+}
+
 function queueProgress(comicID: number, payload: { last_page: number; last_cfi: string; seq: number }): void {
   try {
     const raw = localStorage.getItem(PROGRESS_QUEUE_KEY)
@@ -288,6 +299,15 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     if (res.status === 204) return undefined as T
     return await res.json()
   } catch (e) {
+    // No HTTP status → real network error (DNS, refused, dropped
+    // mid-request, TLS, timeout). Notify the app so it can flip to
+    // offline mode if appropriate. We notify on every such error;
+    // App.tsx debounces the actual transition to avoid flipping on
+    // a single transient hiccup.
+    const status = (e as any)?.status
+    if (!status) {
+      try { onNetworkError() } catch { /* never let the hook break the throw */ }
+    }
     if ((e as any)?.name === 'AbortError') {
       throw new Error('Request timed out')
     }
@@ -337,7 +357,7 @@ export const api = {
   },
   comic: (id: number) => req<Comic>('GET', `/api/comics/${id}`),
   progress: (id: number) => req<{ last_page: number; updated_at: string } | null>('GET', `/api/comics/${id}/progress`),
-  saveProgress: (id: number, last_page: number, last_cfi?: string, seq?: number) => {
+  saveProgress: async (id: number, last_page: number, last_cfi?: string, seq?: number) => {
     const payload = {
       last_page,
       last_cfi: last_cfi ?? '',
@@ -347,16 +367,20 @@ export const api = {
       // newer position with an older one.
       seq: seq ?? Date.now(),
     }
-    // When the native client decided we're offline, write to the
-    // local queue instead of attempting the POST. AuthGuard drains
-    // the queue when it next sees /api/auth/me succeed — the same
-    // seq-based upsert means out-of-order arrivals at the server
-    // are fine, so we can drain in any order.
     if (offlineModeGetter()) {
       queueProgress(id, payload)
-      return Promise.resolve()
+      return
     }
-    return req<void>('POST', `/api/comics/${id}/progress`, payload)
+    try {
+      await req<void>('POST', `/api/comics/${id}/progress`, payload)
+    } catch (err) {
+      // Network failure — queue locally so the write isn't lost.
+      // (HTTP errors like 401/403/500 still propagate.) Covers the
+      // gap between "connection drops" and "offlineMode flips":
+      // saveProgress calls in that window would otherwise vanish.
+      if (!(err as any)?.status) queueProgress(id, payload)
+      throw err
+    }
   },
   // Exposed on the api object for callers who already pull `api`
   // in; the underlying function is also exported standalone.

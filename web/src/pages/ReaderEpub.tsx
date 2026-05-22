@@ -58,6 +58,11 @@ export default function ReaderEpub() {
   const renditionRef = useRef<Rendition | null>(null)
   const cfiRef = useRef<string>('')
   const readyRef = useRef(false)
+  // Tracks whether the FIRST relocated event (= the initial restore
+  // landing) has fired. Used to suppress the post-restore save that
+  // would otherwise overwrite the server's current value with the
+  // potentially-stale value read from the cached comic metadata.
+  const firstRelocatedSeenRef = useRef(false)
   // ePub has no native concept of "page count" — store rounded percentage
   // (0-100) in last_page so the existing library bar formula
   // (last_page / page_count * 100) yields a percentage display. pctRef is
@@ -330,7 +335,17 @@ export default function ReaderEpub() {
         // drag and clears once the commit completes.
         if (!userMovedRef.current) setScrubIdx(cfiIdx)
       }
-      // Persist after the first restore completes
+      // The FIRST relocated after display() represents the restore
+      // landing on the saved position. Saving it with a fresh
+      // Date.now() seq can clobber a more-current value the server
+      // already has (e.g., when the local cache held a stale CFI).
+      // Treat the first relocated as a no-op and only save
+      // subsequent ones, which always represent real user navigation
+      // (chevron, keyboard, slider, swipe).
+      if (!firstRelocatedSeenRef.current) {
+        firstRelocatedSeenRef.current = true
+        return
+      }
       if (readyRef.current) {
         enqueueSave(loc.start.cfi)
       }

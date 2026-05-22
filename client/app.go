@@ -16,6 +16,9 @@ import (
 
 	"comicblaster-client/connection"
 	"comicblaster-client/discovery"
+	"comicblaster-client/offline"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App is the Wails lifecycle handle + RPC surface. Its methods are
@@ -27,18 +30,23 @@ type App struct {
 	ctx     context.Context
 	version string
 	conn    *connection.Manager
+	off     *offline.Manager
 }
 
 func NewApp(version string) *App {
 	return &App{
 		version: version,
 		conn:    connection.New(),
+		off:     offline.New(),
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	log.Printf("ComicBlaster client %s — startup", a.version)
+	if err := a.off.Load(); err != nil {
+		log.Printf("offline: load manifest: %v", err)
+	}
 }
 
 func (a *App) shutdown(_ context.Context) {
@@ -150,4 +158,133 @@ func (a *App) RestartServer() error {
 		return fmt.Errorf("restart returned %d", res.StatusCode)
 	}
 	return nil
+}
+
+// --- offline reading ---------------------------------------------------------
+//
+// Bindings the React side calls to manage downloaded comics. Storage
+// + manifest live under os.UserConfigDir()/ComicBlaster/offline/;
+// this file is the Wails-RPC surface.
+
+// DownloadComic streams /api/comics/{id}/file to local disk and adds
+// the comic to the offline manifest. The download runs in a
+// background goroutine and reports progress via the
+// "offline:progress" Wails event — the frontend subscribes once on
+// mount and updates per-card progress bars from there. Returns
+// immediately; the caller polls DownloadStatus or listens to events.
+//
+// Parameters come from the frontend because they're all known
+// client-side already (Comic.format, Comic.title, Comic.cover_url
+// from the API response). Avoiding a server-side metadata lookup
+// here means the download flow works even when the React side has a
+// fresh cache that the Go side hasn't seen.
+type DownloadComicParams struct {
+	ComicID  int64  `json:"comic_id"`
+	Format   string `json:"format"`
+	Title    string `json:"title"`
+	CoverURL string `json:"cover_url"`
+}
+
+func (a *App) DownloadComic(p DownloadComicParams) error {
+	saved, err := a.conn.Load()
+	if err != nil {
+		return fmt.Errorf("load connection: %w", err)
+	}
+	if saved == nil || saved.URL == "" {
+		return fmt.Errorf("not connected to a server")
+	}
+	if saved.Token == "" {
+		return fmt.Errorf("not signed in")
+	}
+	go func() {
+		_, err := a.off.Download(a.ctx, offline.DownloadParams{
+			ComicID:   p.ComicID,
+			ServerURL: saved.URL,
+			Token:     saved.Token,
+			Format:    p.Format,
+			Title:     p.Title,
+			CoverURL:  p.CoverURL,
+		}, func(st *offline.Status) {
+			// Push every progress tick to the frontend. The status
+			// payload is small (~60 bytes) so this is cheap even
+			// for 1% updates on a 1 GB download.
+			wailsruntime.EventsEmit(a.ctx, "offline:progress", st)
+		})
+		if err != nil {
+			log.Printf("offline: download %d: %v", p.ComicID, err)
+		}
+	}()
+	return nil
+}
+
+// DownloadStatus returns the live or last-known state of a comic.
+// Returns nil if the comic has never been downloaded and isn't
+// currently downloading — callers should treat that as "not
+// downloaded".
+func (a *App) DownloadStatus(comicID int64) *offline.Status {
+	return a.off.Status(comicID)
+}
+
+// RemoveDownload deletes the local file + manifest entry. Idempotent.
+func (a *App) RemoveDownload(comicID int64) error {
+	return a.off.Remove(comicID)
+}
+
+// ListDownloads returns every Entry stored for the currently-saved
+// server URL. The Settings → Offline section + library badge query
+// this on mount and after every download/remove.
+func (a *App) ListDownloads() []offline.Entry {
+	saved, err := a.conn.Load()
+	if err != nil || saved == nil {
+		return a.off.List("") // fall back to everything
+	}
+	return a.off.List(saved.URL)
+}
+
+// StorageInfo aggregates total bytes used + free disk space for the
+// Settings UI's storage panel.
+func (a *App) StorageInfo() (*offline.StorageInfo, error) {
+	saved, err := a.conn.Load()
+	if err != nil || saved == nil {
+		return a.off.StorageInfo("")
+	}
+	return a.off.StorageInfo(saved.URL)
+}
+
+// RemoveAllDownloads wipes every offline file for the current
+// server (or all servers when no connection is saved). Settings →
+// Offline's "Remove all" button calls this after confirming with
+// the user.
+func (a *App) RemoveAllDownloads() error {
+	saved, _ := a.conn.Load()
+	if saved == nil {
+		return a.off.RemoveAll("")
+	}
+	return a.off.RemoveAll(saved.URL)
+}
+
+// CacheLibrary persists the most recent library list so the offline-
+// mode bootstrap (Phase E) can render something on first launch
+// without a network. The frontend serialises whatever it wants;
+// from Go's perspective this is opaque bytes.
+func (a *App) CacheLibrary(payload string) error {
+	saved, _ := a.conn.Load()
+	if saved == nil {
+		return fmt.Errorf("no saved server to cache library for")
+	}
+	return a.off.LibraryCacheWrite(saved.URL, []byte(payload))
+}
+
+// LoadCachedLibrary returns the last cached library payload, or ""
+// if none exists. Frontend deserialises.
+func (a *App) LoadCachedLibrary() (string, error) {
+	saved, _ := a.conn.Load()
+	if saved == nil {
+		return "", nil
+	}
+	data, err := a.off.LibraryCacheRead(saved.URL)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

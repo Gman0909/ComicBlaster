@@ -51,8 +51,10 @@ func main() {
 		MinWidth:  640,
 		MinHeight: 480,
 		AssetServer: &assetserver.Options{
-			Assets:  rooted,
-			Handler: spaHandler(rooted), // SPA fallback to index.html
+			Assets: rooted,
+			// Handler also serves locally-downloaded comic files
+			// under /_offline/{id} for the offline-reading feature.
+			Handler: spaHandler(rooted, app.off),
 		},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,

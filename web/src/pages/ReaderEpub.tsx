@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ChevronLeft, ChevronRight, Tag, Bookmark, Type, Sun, Moon, Maximize, Minimize } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Tag, Bookmark, Type, Sun, Moon, Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react'
 import ePub, { type Book, type Rendition, type Location } from 'epubjs'
 import { api } from '../api'
 import { FullPageSpinner } from '../components/Spinner'
@@ -17,6 +17,13 @@ const THEMES: Record<Theme, { body: Record<string, string> }> = {
 }
 
 const FONT_STEPS = [80, 90, 100, 110, 125, 140, 160, 180] // percent
+
+// Zoom levels are a discrete ladder; 1× is fit-to-viewport (the
+// default), values above that overflow the iframe and let the user
+// scroll within the page. Comic-style ePubs (one image per spine
+// item) benefit from zooming in to read small panels; text ePubs
+// stay readable at 1× and use the font-size slider instead.
+const ZOOM_STEPS = [1, 1.25, 1.5, 2, 3]
 
 export default function ReaderEpub() {
   const { id } = useParams<{ id: string }>()
@@ -56,6 +63,22 @@ export default function ReaderEpub() {
   // requestAnimationFrame callback that bypasses the display()
   // promise rejection path.
   const [renderError, setRenderError] = useState<string | null>(null)
+  // Spine position drives the bottom-bar slider + "Page X / Y" label.
+  // Total is set once the sanitised spine is known; current is mirrored
+  // into scrubIdx on every relocated event unless the user is mid-drag
+  // (userMovedRef latched). Same scrub/commit split as the CBZ reader:
+  // dragging the thumb across 100 pages must not trigger 100 displays.
+  const [spineTotal, setSpineTotal] = useState(0)
+  const [scrubIdx, setScrubIdx]   = useState(0)
+  const userMovedRef = useRef(false)
+  // Zoom is an index into ZOOM_STEPS. Stored in localStorage so the
+  // user's preferred zoom survives across opens of the same comic
+  // (and across comics — for now there's no per-comic memory; the
+  // user's last zoom level applies everywhere).
+  const [zoomIdx, setZoomIdx] = useState(() => {
+    const s = localStorage.getItem('cb-epub-zoom-idx')
+    return s ? parseInt(s, 10) : 0
+  })
   const [fontIdx, setFontIdx] = useState(() => {
     const stored = localStorage.getItem('cb-epub-font-idx')
     return stored ? parseInt(stored, 10) : 2 // 100%
@@ -109,10 +132,63 @@ export default function ReaderEpub() {
     const rendition = book.renderTo(containerRef.current, {
       width:  '100%',
       height: '100%',
+      // flow:'paginated' with spread:'none' is the most reliable
+      // layout we have for image-per-section ePubs. scrolled-doc
+      // was tried but ended up collapsing the iframe to 20px tall
+      // (height auto-sizes to content, which fights our 100vh
+      // image-fit CSS).
       flow:   'paginated',
+      spread: 'none',
       allowScriptedContent: false,
     })
     renditionRef.current = rendition
+
+    // Default rules — apply to every iframe regardless of named theme.
+    // These fix three of the symptoms reported on the Jeff Hawke
+    // comic-style ePub:
+    //   - page off-centre → body flex centring
+    //   - image doesn't scale → max-width 100vw, max-height 100vh,
+    //     object-fit contain
+    //   - whole page collapses to a corner → html/body fill the
+    //     viewport
+    // Text-only ePubs are unaffected: there's no <img> to constrain
+    // and flex centring of long-form text doesn't visibly change
+    // anything because the column fills the viewport anyway.
+    // Default rules — these fix the layout symptoms reported on
+    // comic-style ePubs (Jeff Hawke etc., where each spine item is a
+    // thin XHTML wrapper around a single <img>):
+    //
+    //   img: width=100vw + max-height=100vh + object-fit:contain
+    //   actively SCALES the image up to fill the viewport (vs.
+    //   max-width:100vw which is non-binding when the natural image
+    //   is smaller than the viewport, leaving it tiny in a corner).
+    //   object-fit:contain preserves aspect ratio — for portrait
+    //   pages the height-cap wins; for landscape the width-cap wins.
+    //
+    //   body: flex centring keeps the letterboxed image in the
+    //   middle. height:100vh + overflow:hidden ensures the iframe
+    //   doesn't grow scrollbars at 1× zoom even if a stray <p> or
+    //   stylesheet rule pushes it just past viewport.
+    rendition.themes.default({
+      'html': { 'height': '100%', 'margin': '0', 'padding': '0' },
+      'body': {
+        'margin': '0',
+        'padding': '0',
+        'height': '100vh',
+        'display': 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'overflow': 'hidden',
+      },
+      'img': {
+        'width': '100vw',
+        'max-height': '100vh',
+        'height': 'auto',
+        'object-fit': 'contain',
+        'display': 'block',
+        'margin': '0 auto',
+      },
+    })
 
     // Register themes and apply current selection + font size
     rendition.themes.register('light', THEMES.light)
@@ -122,63 +198,87 @@ export default function ReaderEpub() {
     rendition.themes.fontSize(`${FONT_STEPS[fontIdx]}%`)
 
     const startCfi = comic.progress?.last_cfi || undefined
-    // Sequence: wait for the book's manifest to parse → sanitise the
-    // spine → try to display.
+    // Sequence: wait for the book's manifest to parse → mark which
+    // spine items are reachable → try to display.
     //
-    // The sanitisation step is defensive. Some ePubs declare spine
-    // itemrefs whose idref has no matching manifest item — the
-    // classic example is `<itemref idref="cover"/>` with no
-    // `<item id="cover"/>`. When epub.js tries to render those it
-    // crashes in archive.request via `new Path(undefined).indexOf("://"`)
-    // and because the throw fires inside a requestAnimationFrame
-    // callback the display() promise never rejects — the iframe
-    // never gets injected and the user sees a black void. Stripping
-    // the broken items before display() bypasses the crash; remaining
-    // valid spine entries render normally.
+    // We DON'T mutate spine.spineItems (filtering it shifts indices
+    // and invalidates the cfiBase values already baked into each
+    // section — epub.js then can't resolve any CFI back to the
+    // right section). Instead:
+    //
+    //   - Items with no href (idref pointed at a missing manifest
+    //     entry) get linear='no' so epub.js's section.next/prev
+    //     skip them — they're still in the array, indices intact.
+    //   - Items WITH href get linear='yes' explicitly. The EPUB
+    //     spec defaults linear to 'yes' when omitted, but
+    //     epub.js's strict `linear === "yes"` check treats
+    //     undefined as non-linear, breaking ALL chevron / keyboard
+    //     navigation on OPFs that simply omit the attribute (which
+    //     is most of them in the wild). Forcing it makes nav work.
     ;(async () => {
       try {
         await book.ready
-        // epub.js's Book['spine'] type doesn't expose spineItems
-        // publicly; cast through unknown so TS doesn't complain about
-        // the field we're rewriting.
         const spine = book.spine as unknown as {
-          spineItems: Array<{ href?: string; idref?: string; index: number }>
-          spineByHref: Record<string, number>
-          spineById: Record<string, number>
-          length: number
+          spineItems: Array<{ href?: string; idref?: string; index: number; linear?: string }>
         }
-        const items = spine.spineItems
-        const brokenCount = items?.filter((s) => !s.href).length ?? 0
-        if (brokenCount > 0) {
-          const cleaned = items.filter((s) => !!s.href)
-          cleaned.forEach((s, i) => { s.index = i })
-          spine.spineItems = cleaned
-          spine.length = cleaned.length
-          // Rebuild the href/id → index lookup maps so spine.get()
-          // still resolves by all the keys epub.js supports.
-          const byHref: Record<string, number> = {}
-          const byId: Record<string, number> = {}
-          cleaned.forEach((s, i) => {
-            if (s.href) {
-              byHref[s.href] = i
-              byHref[encodeURI(s.href)] = i
-              try { byHref[decodeURI(s.href)] = i } catch { /* malformed URI */ }
+        const items = (spine.spineItems ?? []) as Array<{
+          href?: string; linear?: string; index: number;
+          prev?: () => unknown; next?: () => unknown;
+        }>
+        let brokenCount = 0
+        items.forEach((s) => {
+          if (!s.href) {
+            s.linear = 'no'  // section.next/prev will skip these
+            brokenCount++
+          } else if (s.linear !== 'yes') {
+            s.linear = 'yes' // EPUB spec default; epub.js requires the exact string
+          }
+        })
+        // Re-bind every section's prev/next closure to traverse the
+        // current items array skipping non-linear entries. The
+        // original closures were set during spine.unpack(), but ONLY
+        // for items whose linear was already 'yes' at that point —
+        // for OPFs that omit the linear attribute (most of them), no
+        // closures got created at all, so rendition.prev()/next()
+        // silently return undefined and the chevrons no-op. This
+        // rebuild is the actual fix.
+        items.forEach((s, i) => {
+          s.prev = () => {
+            let p = i
+            while (p > 0) {
+              const prev = items[p - 1]
+              if (prev && prev.linear === 'yes') return prev
+              p -= 1
             }
-            if (s.idref) byId[s.idref] = i
-          })
-          spine.spineByHref = byHref
-          spine.spineById = byId
-          console.warn(`epub ${comicId}: skipped ${brokenCount} broken spine item(s) with no manifest href`)
+            return undefined
+          }
+          s.next = () => {
+            let p = i
+            while (p < items.length - 1) {
+              const nxt = items[p + 1]
+              if (nxt && nxt.linear === 'yes') return nxt
+              p += 1
+            }
+            return undefined
+          }
+        })
+        if (brokenCount > 0) {
+          console.warn(`epub ${comicId}: ${brokenCount} broken spine item(s) marked non-linear`)
         }
+        setSpineTotal(items.length)
 
-        // Display with a CFI fallback — if the stored CFI pointed at a
-        // now-removed spine slot (or was never valid), retry from the
-        // start so the reader at least opens.
+        // Initial display: prefer the stored CFI, fall back to the
+        // first item with a valid href so we don't trigger the
+        // archive.request(undefined) crash on a bad spine[0].
+        const firstValid = items.find((s) => !!s.href)
+        const startTarget = startCfi || firstValid?.href
         try {
-          await rendition.display(startCfi)
+          await rendition.display(startTarget)
         } catch (cfiErr) {
-          console.warn(`epub ${comicId}: display(${startCfi}) failed, retrying from start`, cfiErr)
-          await rendition.display()
+          console.warn(`epub ${comicId}: display(${startTarget}) failed`, cfiErr)
+          if (firstValid?.href && startTarget !== firstValid.href) {
+            await rendition.display(firstValid.href)
+          }
         }
         readyRef.current = true
       } catch (err) {
@@ -196,6 +296,24 @@ export default function ReaderEpub() {
         const rounded = Math.max(0, Math.min(100, Math.round(p * 100)))
         pctRef.current = rounded
         setPct(rounded)
+      }
+      // Spine index — drives the slider + "Page X / Y" label.
+      // Resolve via book.spine.get(cfi) since loc.start.index isn't
+      // exposed on every epub.js build; falls back to (loc.start as
+      // any).index if present.
+      const cfiIdx = ((): number | null => {
+        try {
+          const sec = book.spine.get(loc.start.cfi) as { index?: number } | null
+          if (sec && typeof sec.index === 'number') return sec.index
+        } catch { /* falls through */ }
+        const li = (loc as any).start?.index
+        return typeof li === 'number' ? li : null
+      })()
+      if (cfiIdx !== null) {
+        // Keep the slider thumb glued to programmatic moves unless the
+        // user is actively scrubbing — userMovedRef latches during a
+        // drag and clears once the commit completes.
+        if (!userMovedRef.current) setScrubIdx(cfiIdx)
       }
       // Persist after the first restore completes
       if (readyRef.current) {
@@ -247,8 +365,85 @@ export default function ReaderEpub() {
     localStorage.setItem('cb-epub-font-idx', String(fontIdx))
   }, [fontIdx])
 
-  const next   = useCallback(() => renditionRef.current?.next(), [])
-  const prev   = useCallback(() => renditionRef.current?.prev(), [])
+  // Zoom application. epub.js's `themes.override(selector, decl)` adds
+  // a CSS declaration block to the iframe's injected stylesheet; it
+  // merges with our default theme rules (the override is appended
+  // later, so for shared properties the override wins). Img grows to
+  // a multiple of viewport units (so the image actually has a larger
+  // bounding box, not a pure visual transform); body is switched out
+  // of flex centring when zoomed so overflow scrolling works — flex
+  // on a larger-than-viewport child traps you above-left and you
+  // can't scroll up past the centre.
+  useEffect(() => {
+    const r = renditionRef.current
+    if (!r) return
+    const zoom = ZOOM_STEPS[zoomIdx] ?? 1
+    localStorage.setItem('cb-epub-zoom-idx', String(zoomIdx))
+    if (zoom === 1) {
+      r.themes.override('body', 'display: flex; overflow: hidden; align-items: center; justify-content: center')
+      r.themes.override('img',  'width: 100vw; max-height: 100vh; height: auto; object-fit: contain')
+    } else {
+      // When zoomed past 1×, the image overflows the iframe. Drop
+      // flex centring (which traps the user above-left when the
+      // child is larger than the parent) and let body scroll
+      // naturally. The image's bounding box grows with zoom so
+      // panning by scroll works as expected.
+      r.themes.override('body', 'display: block; overflow: auto')
+      r.themes.override('img',  `width: ${100 * zoom}vw; height: auto; max-height: none; object-fit: contain`)
+    }
+  }, [zoomIdx])
+
+  // Navigate to a specific spine index — used by chevron prev/next,
+  // slider commit, and future direct-jump UI (table of contents).
+  //
+  // epub.js's rendition.prev()/next() rely on the bound
+  // section.prev/section.next closures created during spine.unpack.
+  // Those closures only get the linear-navigation chain if the
+  // itemref had linear="yes" — many ePubs (including this one) omit
+  // the attribute entirely. epub.js then treats those as
+  // non-linear, prev/next return undefined, and the chevrons
+  // silently no-op. We sidestep the whole mess by jumping directly
+  // by spine index using rendition.display(href).
+  const goToSpineIdx = useCallback((idx: number) => {
+    const r = renditionRef.current
+    const b = bookRef.current
+    if (!r || !b) return
+    const spine = b.spine as unknown as { spineItems: Array<{ href?: string; linear?: string }> }
+    const items = spine.spineItems
+    // Find the nearest item with a valid href, searching toward the
+    // request direction. We snap to the next valid item if the
+    // target itself is non-linear (e.g. the broken cover entry the
+    // OPF declared but never gave a manifest match).
+    let i = Math.max(0, Math.min(items.length - 1, idx))
+    const goingForward = idx >= 0
+    while (i >= 0 && i < items.length && (!items[i].href || items[i].linear !== 'yes')) {
+      i = goingForward ? i + 1 : i - 1
+    }
+    if (i < 0 || i >= items.length) return
+    r.display(items[i].href!).catch(() => {})
+  }, [])
+
+  // Mirror the slider commit position into a ref so prev/next can
+  // read it without re-binding the callback every render.
+  const scrubIdxRef = useRef(0)
+  useEffect(() => { scrubIdxRef.current = scrubIdx }, [scrubIdx])
+
+  const next = useCallback(() => goToSpineIdx(scrubIdxRef.current + 1), [goToSpineIdx])
+  const prev = useCallback(() => goToSpineIdx(scrubIdxRef.current - 1), [goToSpineIdx])
+
+  // Slider commit. The slider's onChange updates scrubIdx continuously
+  // (so the thumb tracks the finger smoothly); we commit to the actual
+  // spine position only on release / debounce, so dragging across 100
+  // pages doesn't trigger 100 rendition.display() calls.
+  const scrubTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const commitScrub = useCallback((idx: number) => {
+    if (scrubTimer.current) clearTimeout(scrubTimer.current)
+    scrubTimer.current = setTimeout(() => {
+      scrubTimer.current = undefined
+      userMovedRef.current = false
+      goToSpineIdx(idx)
+    }, 120)
+  }, [goToSpineIdx])
   // Drain the save queue first so the latest position lands on the server
   // before the library refetches. Catches the case where a backward move
   // would otherwise be clobbered by a slower forward save still in flight.
@@ -259,7 +454,12 @@ export default function ReaderEpub() {
     navigate(-1)
   }, [enqueueSave, navigate])
 
-  // Keyboard
+  // Keyboard — bound at the window level for arrow keys when the
+  // user hasn't clicked into the iframe yet, AND on the rendition
+  // for the case where they have. epub.js fires 'keydown' on the
+  // rendition for any key pressed inside one of its iframes; we
+  // forward those through the same handler so the reading shortcuts
+  // keep working after the iframe steals focus on click.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
@@ -268,7 +468,12 @@ export default function ReaderEpub() {
       if (e.key === 'Escape') goBack()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const r = renditionRef.current
+    r?.on('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      r?.off('keydown', onKey)
+    }
   }, [next, prev, goBack])
 
   // Auto-hide controls
@@ -413,6 +618,24 @@ export default function ReaderEpub() {
                         >A+</button>
                       </div>
                     </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-white/40 mb-1.5">Zoom</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setZoomIdx(i => Math.max(0, i - 1))}
+                          disabled={zoomIdx === 0}
+                          aria-label="Zoom out"
+                          className="w-8 h-8 rounded text-white/60 hover:text-white flex items-center justify-center disabled:opacity-30 transition-colors"
+                        ><ZoomOut size={14} aria-hidden /></button>
+                        <span className="flex-1 text-center text-xs text-white/70 tabular-nums">{(ZOOM_STEPS[zoomIdx] ?? 1).toFixed(2)}×</span>
+                        <button
+                          onClick={() => setZoomIdx(i => Math.min(ZOOM_STEPS.length - 1, i + 1))}
+                          disabled={zoomIdx === ZOOM_STEPS.length - 1}
+                          aria-label="Zoom in"
+                          className="w-8 h-8 rounded text-white/60 hover:text-white flex items-center justify-center disabled:opacity-30 transition-colors"
+                        ><ZoomIn size={14} aria-hidden /></button>
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
@@ -482,7 +705,7 @@ export default function ReaderEpub() {
             transition={{ duration: 0.15 }}
             className={`fixed bottom-0 left-0 right-0 z-20 px-4 pt-3 pb-safe-3 bg-gradient-to-t ${overlayBg} to-transparent pointer-events-none`}
           >
-            <div className="flex items-center gap-3 max-w-lg mx-auto pointer-events-auto">
+            <div className="flex items-center gap-3 max-w-2xl mx-auto pointer-events-auto">
               <button
                 onClick={prev}
                 aria-label="Previous page"
@@ -491,16 +714,29 @@ export default function ReaderEpub() {
               >
                 <ChevronLeft size={22} aria-hidden />
               </button>
-              <div
-                className={`flex-1 h-0.5 rounded-full ${isDark ? 'bg-white/15' : 'bg-black/15'}`}
-                role="progressbar"
-                aria-label="Reading progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={pct}
-              >
-                <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
-              </div>
+              {spineTotal > 1 ? (
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, spineTotal - 1)}
+                  value={scrubIdx}
+                  onChange={(e) => {
+                    userMovedRef.current = true
+                    const v = parseInt(e.target.value, 10)
+                    setScrubIdx(v)
+                    commitScrub(v)
+                  }}
+                  aria-label="Page"
+                  aria-valuemin={1}
+                  aria-valuemax={spineTotal}
+                  aria-valuenow={scrubIdx + 1}
+                  className={`flex-1 h-1 rounded-full appearance-none ${isDark ? 'bg-white/15' : 'bg-black/15'} accent-[var(--color-accent)]`}
+                />
+              ) : (
+                <div className={`flex-1 h-0.5 rounded-full ${isDark ? 'bg-white/15' : 'bg-black/15'}`}>
+                  <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
+                </div>
+              )}
               <button
                 onClick={next}
                 aria-label="Next page"
@@ -509,8 +745,8 @@ export default function ReaderEpub() {
               >
                 <ChevronRight size={22} aria-hidden />
               </button>
-              <span className={`${overlayText} opacity-85 text-sm tabular-nums w-10 text-right shrink-0`} aria-live="polite">
-                {pct}%
+              <span className={`${overlayText} opacity-85 text-sm tabular-nums shrink-0 min-w-[5rem] text-right`} aria-live="polite">
+                {spineTotal > 0 ? `${scrubIdx + 1} / ${spineTotal}` : `${pct}%`}
               </span>
             </div>
           </motion.div>

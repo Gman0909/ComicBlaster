@@ -4,7 +4,11 @@
 // Windows, .icns on macOS) from it, so this single PNG drives the
 // branding everywhere outside the browser tab.
 
-import { firefox } from 'playwright-core'
+// Chromium specifically — Firefox in playwright-core doesn't support
+// `omitBackground: true`, so it can't produce the transparent
+// corners required for an icon that composites cleanly on Windows
+// taskbars + macOS docks.
+import { chromium } from 'playwright-core'
 import { pathToFileURL } from 'node:url'
 import { readFileSync } from 'node:fs'
 
@@ -20,10 +24,14 @@ const html = `<!doctype html><meta charset="utf-8"><style>
   svg { display:block; width:${size}px; height:${size}px; }
 </style>${svg}`
 
-const browser = await firefox.launch({ headless: true })
+const browser = await chromium.launch({ headless: true })
 const ctx = await browser.newContext({ viewport: { width: size, height: size } })
 const page = await ctx.newPage()
 await page.setContent(html, { waitUntil: 'networkidle' })
-await page.screenshot({ path: outPath, omitBackground: false, clip: { x: 0, y: 0, width: size, height: size } })
+// omitBackground: true is critical — without it Firefox bakes the
+// default white page background into the PNG, which Wails then
+// embeds in icon.ico as opaque white corners that the OS can't
+// composite cleanly against a taskbar / dock.
+await page.screenshot({ path: outPath, omitBackground: true, clip: { x: 0, y: 0, width: size, height: size } })
 await browser.close()
 console.log(`saved ${outPath}`)

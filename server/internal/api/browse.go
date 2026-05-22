@@ -138,24 +138,41 @@ func resolveStart(path string) (string, error) {
 // readDirs lists the subdirectories of dir. Files are skipped. Entries
 // starting with '.' are kept (the user might want to add ~/comics or
 // /mnt/.snapshots) — we don't second-guess the admin.
+//
+// IMPORTANT: uses os.ReadDir (which returns DirEntry.IsDir() from the
+// d_type byte in the local getdents result) instead of os.Stat per
+// entry. Stat'ing the children of a directory that contains a network
+// mountpoint (CIFS, NFS) triggers a round-trip to the remote server
+// to fetch attributes for the mount root — which can hang for
+// minutes if the mount is in soft-mode or the NAS is slow. The
+// observed symptom was /mnt taking 1-2 minutes to return an EMPTY
+// entries list because every Stat on /mnt/comics timed out and the
+// entry was silently filtered.
+//
+// DirEntry.IsDir() reads the type from the local directory inode, so
+// it works for mountpoints without ever crossing the mount.
+//
+// Trade-off: symlinks that point at directories are reported as
+// non-directories (DirEntry uses the link's own type, not the
+// target's). If we wanted to treat symlinked dirs as dirs we'd have
+// to Stat them, which would bring back the CIFS hang. Acceptable for
+// v1 — symlinked library paths can still be added via the manual
+// text entry.
 func readDirs(dir string) ([]browseEntry, error) {
-	f, err := os.Open(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		return nil, err
-	}
-	var out []browseEntry
-	for _, n := range names {
-		full := filepath.Join(dir, n)
-		info, err := os.Stat(full) // Stat follows symlinks so a link → dir shows up
-		if err != nil || !info.IsDir() {
+	out := make([]browseEntry, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
 			continue
 		}
-		out = append(out, browseEntry{Name: n, Path: full, IsDir: true})
+		out = append(out, browseEntry{
+			Name:  e.Name(),
+			Path:  filepath.Join(dir, e.Name()),
+			IsDir: true,
+		})
 	}
 	// Case-insensitive sort so 'apple' sits next to 'Banana' the way a
 	// human would expect rather than the way ASCII sort would.

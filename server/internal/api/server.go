@@ -112,6 +112,11 @@ func (s *server) routes() http.Handler {
 				r.Get("/admin/library/ignored", s.handleListIgnoredPaths)
 				r.Post("/admin/library/unignore", s.handleUnignorePath)
 				r.Delete("/admin/comics/{id}", s.handleRemoveComic)
+				// Server-side filesystem browser for the Add-path UI.
+				// Admins only — same trust model as the existing
+				// path text input, just made visible.
+				r.Get("/admin/browse", s.handleBrowse)
+				r.Post("/admin/browse/mkdir", s.handleMkdir)
 				// Trigger a service restart. Native clients with an
 				// authenticated admin session expose this in the
 				// Connection panel. Relies on the service manager

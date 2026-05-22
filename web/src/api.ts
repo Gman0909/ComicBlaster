@@ -24,6 +24,20 @@ export interface IgnoredPath {
   added_at: string
 }
 
+export interface BrowseEntry {
+  name: string
+  path: string
+  is_dir: boolean
+}
+
+export interface BrowseResponse {
+  path: string                 // canonicalised current directory on the server
+  separator: string            // "/" or "\\" — the server's native one
+  parent?: string              // omitted at filesystem root
+  entries: BrowseEntry[]       // sub-directories of `path`
+  roots?: string[]             // Windows drive letters, or ["/"] on POSIX
+}
+
 export interface Comic {
   id: number
   title: string
@@ -236,6 +250,16 @@ export const api = {
   ignoredPaths: () => req<IgnoredPath[]>('GET', '/api/admin/library/ignored'),
   unignorePath: (path: string) =>
     req<void>('POST', '/api/admin/library/unignore', { path }),
+
+  // Server-side filesystem browser (admin). Path can be omitted; the
+  // server picks a sensible starting directory (the service user's
+  // home, or `/` if that doesn't exist). Always reflects the SERVER's
+  // filesystem regardless of where the client is running, which is
+  // what we want for picking library paths on a remote machine.
+  browse: (path?: string) =>
+    req<BrowseResponse>('GET', `/api/admin/browse${path ? '?path=' + encodeURIComponent(path) : ''}`),
+  mkdir: (parent: string, name: string) =>
+    req<{ path: string }>('POST', '/api/admin/browse/mkdir', { path: parent, name }),
   removeComic: (id: number, opts: { ignore?: boolean; deleteFile?: boolean } = {}) => {
     const params = new URLSearchParams()
     if (opts.ignore === false) params.set('ignore', '0')

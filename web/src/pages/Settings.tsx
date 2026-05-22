@@ -6,6 +6,7 @@ import { api, configureApi, type User, type Label, type Collection } from '../ap
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { bridge, isNative, setCurrentToken, type ConnectionState } from '../native'
+import BrowsePathModal from '../components/BrowsePathModal'
 
 // ── shared input style ──────────────────────────────────────────────────────
 const inp = 'w-full rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 py-2.5 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)] transition-colors'
@@ -517,19 +518,31 @@ function CollectionsSection() {
 }
 
 // ── Library paths (admin) ───────────────────────────────────────────────────
+//
+// Two ways to add a path:
+//   1. The Browse button opens BrowsePathModal — a server-side
+//      filesystem picker. This is the primary path because it shows
+//      the SERVER's filesystem, which is what we need to point the
+//      scanner at (the alternative — a native OS folder dialog —
+//      shows the CLIENT's filesystem, which is useless when the
+//      client and server are on different machines).
+//   2. Power-user fallback: type a path directly. Useful for paths
+//      the admin already has memorised, or NFS / SMB mounts that
+//      appear under the same name on every host.
 function LibraryPathsSection() {
   const qc = useQueryClient()
   const { data: paths = [] } = useQuery({ queryKey: ['libraryPaths'], queryFn: api.libraryPaths })
-  const [adding, setAdding] = useState(false)
-  const [newPath, setNewPath] = useState('')
-  const [error, setError] = useState('')
+  const [adding, setAdding]       = useState(false)
+  const [browseOpen, setBrowseOpen] = useState(false)
+  const [newPath, setNewPath]     = useState('')
+  const [error, setError]         = useState('')
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['libraryPaths'] })
     qc.invalidateQueries({ queryKey: ['comics'] })
   }
   const create = useMutation({
-    mutationFn: () => api.addLibraryPath(newPath.trim()),
+    mutationFn: (p: string) => api.addLibraryPath(p),
     onSuccess: () => { setNewPath(''); setAdding(false); setError(''); invalidate() },
     onError: (e: any) => setError(e.message ?? 'Failed to add path'),
   })
@@ -541,7 +554,7 @@ function LibraryPathsSection() {
   return (
     <section>
       <h2 className="text-sm font-semibold text-[var(--color-text)] mb-1">Library paths</h2>
-      <p className="text-xs text-[var(--color-text-muted)] mb-3">Folders the scanner reads. Removing a path also removes its comics from the library.</p>
+      <p className="text-xs text-[var(--color-text-muted)] mb-3">Folders on the server that the scanner reads. Removing a path also removes its comics from the library.</p>
       {paths.length > 0 ? (
         <div className="max-w-lg rounded-lg border border-[var(--color-border)] px-4 py-1">
           {paths.map((p) => (
@@ -559,29 +572,49 @@ function LibraryPathsSection() {
           ))}
         </div>
       ) : (
-        <p className="text-xs text-[var(--color-text-muted)] italic">No library paths. Add one below to start scanning comics.</p>
+        <p className="text-xs text-[var(--color-text-muted)] italic">No library paths. Browse the server's filesystem to add one.</p>
       )}
 
-      {adding ? (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setBrowseOpen(true)}
+          className={`${btnPrimary} flex items-center gap-2`}
+        >
+          <Folder size={14} aria-hidden /> Browse server
+        </button>
+        <button
+          type="button"
+          onClick={() => setAdding((v) => !v)}
+          className={`${btnGhost} flex items-center gap-2`}
+        >
+          <Plus size={14} aria-hidden /> {adding ? 'Cancel manual entry' : 'Type path manually'}
+        </button>
+      </div>
+
+      {adding && (
         <div className="mt-3 p-4 max-w-lg rounded-lg bg-[var(--color-surface-raised)] border border-[var(--color-border)] space-y-3">
           <input
             autoFocus
-            placeholder="/path/to/comics"
+            placeholder="/mnt/comics or C:\Comics"
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
             className={`${inp} font-mono`}
-            onKeyDown={(e) => { if (e.key === 'Enter' && newPath.trim()) create.mutate() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && newPath.trim()) create.mutate(newPath.trim()) }}
           />
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex gap-2">
-            <button type="button" disabled={!newPath.trim()} onClick={() => create.mutate()} className={btnPrimary}>Add</button>
+            <button type="button" disabled={!newPath.trim()} onClick={() => create.mutate(newPath.trim())} className={btnPrimary}>Add</button>
             <button type="button" onClick={() => { setAdding(false); setNewPath(''); setError('') }} className={btnGhost}>Cancel</button>
           </div>
         </div>
-      ) : (
-        <button onClick={() => setAdding(true)} className={`${btnGhost} flex items-center gap-2 mt-2`}>
-          <Plus size={14} /> Add path
-        </button>
+      )}
+
+      {browseOpen && (
+        <BrowsePathModal
+          onClose={() => setBrowseOpen(false)}
+          onSelect={(p) => { setBrowseOpen(false); create.mutate(p) }}
+        />
       )}
     </section>
   )

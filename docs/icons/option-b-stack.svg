@@ -1,0 +1,26 @@
+<!--
+  Option B — Comic-issue stack with accent burst.
+  Three offset rounded rectangles read as a stack of issues; the top
+  one is slightly tilted with a small accent burst in the corner —
+  the "Blaster" half of the name. Cleanest at favicon sizes; reads as
+  a stylised library at large sizes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0f1733"/>
+  <!-- back issue -->
+  <rect x="116" y="170" width="270" height="350" rx="22" fill="#2b3a8e" opacity="0.55"/>
+  <!-- mid issue -->
+  <rect x="130" y="150" width="270" height="350" rx="22" fill="#2b3a8e" opacity="0.85"/>
+  <!-- top issue, tilted -->
+  <g transform="rotate(-6 256 280)">
+    <rect x="145" y="130" width="270" height="350" rx="22" fill="#4a5cd6"/>
+    <!-- a horizontal "page" line near the top to suggest a cover-line -->
+    <rect x="175" y="175" width="210" height="14" rx="7" fill="#ffffff" opacity="0.9"/>
+    <rect x="175" y="200" width="140" height="10" rx="5" fill="#ffffff" opacity="0.6"/>
+  </g>
+  <!-- accent burst over the top-right corner of the top issue -->
+  <g transform="translate(380 130)">
+    <polygon points="0,-50 12,-14 50,-15 20,8 32,46 0,22 -32,46 -20,8 -50,-15 -12,-14"
+             fill="#ffd24a" stroke="#a06e00" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+</svg>

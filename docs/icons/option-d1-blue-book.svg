@@ -1,0 +1,21 @@
+<!--
+  D1 — Blue magazine, yellow bolt.
+  Direct re-fill of the original: solid mid-blue book pages with a
+  thin white outline so the silhouette stays crisp on the dark
+  background. Yellow bolt unchanged.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0f1733"/>
+  <g stroke="#ffffff" stroke-width="14" stroke-linejoin="round" stroke-linecap="round" fill="#4a5cd6">
+    <path d="M70 150
+             C 70 150, 180 130, 256 180
+             L 256 410
+             C 180 360, 70 380, 70 380 Z"/>
+    <path d="M442 150
+             C 442 150, 332 130, 256 180
+             L 256 410
+             C 332 360, 442 380, 442 380 Z"/>
+  </g>
+  <polygon points="280,90 200,260 254,260 220,400 320,210 264,210 296,90"
+           fill="#ffd24a" stroke="#a06e00" stroke-width="6" stroke-linejoin="round"/>
+</svg>

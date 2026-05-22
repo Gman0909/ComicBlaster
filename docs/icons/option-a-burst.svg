@@ -1,0 +1,21 @@
+<!--
+  Option A — Comic-burst monogram.
+  A 12-point starburst silhouette filled with the accent-strong blue,
+  monogram "CB" set in heavy white sans on top. Reads as a classic
+  comic-book onomatopoeia panel ("POW!") at any size.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0f1733"/>
+  <g transform="translate(256 256) rotate(-12)">
+    <!-- 12-point starburst. Alternating outer / inner radii give the spikes. -->
+    <polygon points="
+      0,-200 35,-110 110,-130 75,-55 175,-65 105,5
+      175,75 75,65 110,140 35,120 0,205 -35,120
+      -110,140 -75,65 -175,75 -105,5 -175,-65 -75,-55
+      -110,-130 -35,-110"
+      fill="#3a4cc7" stroke="#5d72ff" stroke-width="6" stroke-linejoin="round"/>
+  </g>
+  <text x="256" y="295" text-anchor="middle"
+        font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="170" font-weight="900" fill="#ffffff" letter-spacing="-6">CB</text>
+</svg>

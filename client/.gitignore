@@ -3,8 +3,16 @@
 /frontend/dist/
 /dist/
 
-# Wails build artifacts (.exe, .app bundles, installers).
-/build/
+# Wails build artifacts (.exe, .app bundles, generated per-platform
+# icons, NSIS installer template). Everything under build/ is
+# regenerated on each `wails build` from the single committed source:
+#   build/appicon.png  — the app icon. Wails reads this on every
+#                         build and regenerates .ico (Windows) and
+#                         .icns (macOS) from it.
+/build/bin/
+/build/windows/
+/build/darwin/
+/build/linux/
 
 # Wails caches the frontend install state next to package.json.
 /frontend/package.json.md5

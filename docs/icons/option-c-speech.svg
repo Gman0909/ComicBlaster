@@ -1,0 +1,27 @@
+<!--
+  Option C — Speech bubble with motion lines.
+  A rounded speech-bubble silhouette (the "comic" half) trailed by
+  four diagonal speed lines (the "blaster" half). White-on-blue,
+  high contrast even at 16px favicon.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#3a4cc7"/>
+  <!-- speed lines, behind the bubble, leaning right→left -->
+  <g stroke="#ffffff" stroke-width="22" stroke-linecap="round" opacity="0.95">
+    <line x1="80"  y1="155" x2="200" y2="155"/>
+    <line x1="60"  y1="220" x2="180" y2="220"/>
+    <line x1="80"  y1="285" x2="200" y2="285"/>
+    <line x1="60"  y1="350" x2="170" y2="350"/>
+  </g>
+  <!-- speech bubble body + tail -->
+  <g fill="#ffffff">
+    <rect x="220" y="120" width="240" height="260" rx="34"/>
+    <polygon points="280,360 250,440 330,365"/>
+  </g>
+  <!-- two small motion dots inside the bubble for character -->
+  <g fill="#3a4cc7">
+    <circle cx="295" cy="250" r="14"/>
+    <circle cx="345" cy="250" r="14"/>
+    <circle cx="395" cy="250" r="14"/>
+  </g>
+</svg>

@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ComicBlaster icon options</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px;
+    background: #18181b;
+    color: #e6e6e6;
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-weight: 600; font-size: 22px; margin: 0 0 6px 0; }
+  .sub { color: #999; margin-bottom: 28px; }
+  table { border-collapse: collapse; }
+  td { padding: 14px 22px; text-align: center; vertical-align: middle; }
+  td.label { text-align: left; font-weight: 600; font-size: 16px; min-width: 220px; }
+  td.label small { display: block; font-weight: 400; color: #999; margin-top: 2px; font-size: 12px; }
+  th { padding: 8px 22px; font-weight: 500; color: #999; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  img.thumb { display: block; margin: 0 auto; }
+  /* Favicon-sized cell gets a fake browser-tab background */
+  .tab-bg {
+    background: #2d2d33;
+    border-radius: 6px 6px 0 0;
+    padding: 6px 10px;
+    display: inline-flex; align-items: center; gap: 8px;
+    color: #c0c0c0;
+    font-size: 12px;
+  }
+</style>
+
+<h1>ComicBlaster icon options</h1>
+<div class="sub">Each option rendered at three sizes: 16 px (browser-tab favicon), 64 px (taskbar / dock), 256 px (app icon).</div>
+
+<table>
+  <thead>
+    <tr>
+      <th></th>
+      <th>16 px<br><small>favicon</small></th>
+      <th>64 px<br><small>taskbar / dock</small></th>
+      <th>256 px<br><small>app icon</small></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">A. Burst monogram<br><small>POW!-style starburst with "CB"</small></td>
+      <td><span class="tab-bg"><img src="option-a-burst.svg" width="16" height="16"> Tab</span></td>
+      <td><img class="thumb" src="option-a-burst.svg" width="64" height="64"></td>
+      <td><img class="thumb" src="option-a-burst.svg" width="256" height="256"></td>
+    </tr>
+    <tr>
+      <td class="label">B. Comic-issue stack<br><small>Stacked covers + burst accent</small></td>
+      <td><span class="tab-bg"><img src="option-b-stack.svg" width="16" height="16"> Tab</span></td>
+      <td><img class="thumb" src="option-b-stack.svg" width="64" height="64"></td>
+      <td><img class="thumb" src="option-b-stack.svg" width="256" height="256"></td>
+    </tr>
+    <tr>
+      <td class="label">C. Speech bubble + speed<br><small>Comic dialog with motion lines</small></td>
+      <td><span class="tab-bg"><img src="option-c-speech.svg" width="16" height="16"> Tab</span></td>
+      <td><img class="thumb" src="option-c-speech.svg" width="64" height="64"></td>
+      <td><img class="thumb" src="option-c-speech.svg" width="256" height="256"></td>
+    </tr>
+    <tr>
+      <td class="label">D. Book + lightning<br><small>Open book with a bolt</small></td>
+      <td><span class="tab-bg"><img src="option-d-book-bolt.svg" width="16" height="16"> Tab</span></td>
+      <td><img class="thumb" src="option-d-book-bolt.svg" width="64" height="64"></td>
+      <td><img class="thumb" src="option-d-book-bolt.svg" width="256" height="256"></td>
+    </tr>
+  </tbody>
+</table>

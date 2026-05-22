@@ -1,0 +1,49 @@
+<!--
+  D4 — Blue book with comic-panel grid on the covers.
+  Same silhouette as D1 but each cover is divided into 2-up comic
+  panels, the most on-the-nose "comic book" treatment in the set.
+  Yellow bolt stays as the energetic accent.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0f1733"/>
+
+  <!-- A clip path per side so the panel dividers stay inside the page silhouettes -->
+  <defs>
+    <clipPath id="leftPage">
+      <path d="M70 150
+               C 70 150, 180 130, 256 180
+               L 256 410
+               C 180 360, 70 380, 70 380 Z"/>
+    </clipPath>
+    <clipPath id="rightPage">
+      <path d="M442 150
+               C 442 150, 332 130, 256 180
+               L 256 410
+               C 332 360, 442 380, 442 380 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Cover fills -->
+  <path d="M70 150 C 70 150, 180 130, 256 180 L 256 410 C 180 360, 70 380, 70 380 Z" fill="#4a5cd6"/>
+  <path d="M442 150 C 442 150, 332 130, 256 180 L 256 410 C 332 360, 442 380, 442 380 Z" fill="#4a5cd6"/>
+
+  <!-- Panel dividers, clipped to each page -->
+  <g stroke="#0f1733" stroke-width="10" stroke-linecap="round">
+    <g clip-path="url(#leftPage)">
+      <line x1="60"  y1="270" x2="260" y2="270"/>
+    </g>
+    <g clip-path="url(#rightPage)">
+      <line x1="252" y1="270" x2="452" y2="270"/>
+    </g>
+  </g>
+
+  <!-- Outer outlines on top so the silhouette stays crisp -->
+  <g stroke="#ffffff" stroke-width="14" stroke-linejoin="round" stroke-linecap="round" fill="none">
+    <path d="M70 150 C 70 150, 180 130, 256 180 L 256 410 C 180 360, 70 380, 70 380 Z"/>
+    <path d="M442 150 C 442 150, 332 130, 256 180 L 256 410 C 332 360, 442 380, 442 380 Z"/>
+  </g>
+
+  <!-- Bolt -->
+  <polygon points="280,90 200,260 254,260 220,400 320,210 264,210 296,90"
+           fill="#ffd24a" stroke="#a06e00" stroke-width="6" stroke-linejoin="round"/>
+</svg>

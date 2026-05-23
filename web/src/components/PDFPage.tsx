@@ -4,11 +4,18 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
+// Directory pdf.js loads its auxiliary wasm modules from (openjpeg
+// for JPEG 2000, jbig2, qcms, …). Served by the pdfjsWasmPlugin in
+// vite.config.ts. Without this, PDFs whose images are JPEG 2000
+// encoded render as blank canvases. Trailing slash is required by
+// the pdf.js loader.
+const WASM_URL = new URL('/pdfjs-wasm/', window.location.origin).toString()
+
 const docCache = new Map<string, pdfjsLib.PDFDocumentProxy>()
 
 async function loadDoc(url: string): Promise<pdfjsLib.PDFDocumentProxy> {
   if (docCache.has(url)) return docCache.get(url)!
-  const doc = await pdfjsLib.getDocument({ url, withCredentials: true }).promise
+  const doc = await pdfjsLib.getDocument({ url, withCredentials: true, wasmUrl: WASM_URL }).promise
   docCache.set(url, doc)
   return doc
 }

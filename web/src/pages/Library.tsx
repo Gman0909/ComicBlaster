@@ -648,7 +648,39 @@ export default function Library() {
         if (!br) throw new Error('offline mode requires the native client')
         const raw = await br.LoadCachedLibrary()
         if (!raw) throw new Error('no cached library available')
-        return JSON.parse(raw) as ComicsPage
+        const lib = JSON.parse(raw) as ComicsPage
+        // Overlay the local progress queue on top of the cached
+        // library payload so the blue progress bar reflects the
+        // user's actual reading position even before AuthGuard's
+        // next online transition drains the queue to the server.
+        // Without this, the cached JSON's stale last_page values
+        // are what render, which doesn't match what the user
+        // actually read.
+        try {
+          const queueRaw = localStorage.getItem('cb-progress-queue-v1')
+          if (queueRaw) {
+            const queue: Array<{ comic_id: number; last_page: number; last_cfi: string; seq: number }> = JSON.parse(queueRaw)
+            const byId = new Map(queue.map((q) => [q.comic_id, q]))
+            lib.comics = lib.comics.map((c) => {
+              const q = byId.get(c.id)
+              if (!q) return c
+              // Only override if the queued seq is newer than what
+              // the cached entry already has — otherwise we'd
+              // regress the bar after a successful online save.
+              const cachedTs = c.progress?.updated_at ? Date.parse(c.progress.updated_at) : 0
+              if (q.seq <= cachedTs) return c
+              return {
+                ...c,
+                progress: {
+                  last_page: q.last_page,
+                  last_cfi: q.last_cfi,
+                  updated_at: new Date(q.seq).toISOString(),
+                },
+              }
+            })
+          }
+        } catch { /* malformed queue — ignore */ }
+        return lib
       }
       return api.comics({
         search,

@@ -47,5 +47,30 @@ async function loadComicFromCache(comicId: number): Promise<Comic> {
   const lib = JSON.parse(raw) as ComicsPage
   const found = lib.comics.find((c) => c.id === comicId)
   if (!found) throw new Error(`Comic ${comicId} is not in the cached library`)
+  // Overlay the local progress queue so the reader's restore lands
+  // on the user's latest position, not the stale value baked into
+  // the JSON cache. Without this, every offline re-open snaps back
+  // to the value from the last online session and the unmount-time
+  // queued save just replays the same position forever.
+  try {
+    const queueRaw = localStorage.getItem('cb-progress-queue-v1')
+    if (queueRaw) {
+      const queue: Array<{ comic_id: number; last_page: number; last_cfi: string; seq: number }> = JSON.parse(queueRaw)
+      const q = queue.find((e) => e.comic_id === comicId)
+      if (q) {
+        const cachedTs = found.progress?.updated_at ? Date.parse(found.progress.updated_at) : 0
+        if (q.seq > cachedTs) {
+          return {
+            ...found,
+            progress: {
+              last_page: q.last_page,
+              last_cfi: q.last_cfi,
+              updated_at: new Date(q.seq).toISOString(),
+            },
+          }
+        }
+      }
+    }
+  } catch { /* malformed queue — ignore */ }
   return found
 }

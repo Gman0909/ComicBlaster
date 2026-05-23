@@ -63,6 +63,12 @@ export default function ReaderEpub() {
   // would otherwise overwrite the server's current value with the
   // potentially-stale value read from the cached comic metadata.
   const firstRelocatedSeenRef = useRef(false)
+  // Distinct from userMovedRef (which tracks "currently scrubbing"
+  // and gets reset on commit): this latches true on the second
+  // relocated event onwards — i.e. ANY movement past the initial
+  // restore landing. Final-save gates use this to avoid saving a
+  // restore-only CFI as if it were a fresh user position.
+  const hasNavigatedRef = useRef(false)
   // ePub has no native concept of "page count" — store rounded percentage
   // (0-100) in last_page so the existing library bar formula
   // (last_page / page_count * 100) yields a percentage display. pctRef is
@@ -346,6 +352,7 @@ export default function ReaderEpub() {
         firstRelocatedSeenRef.current = true
         return
       }
+      hasNavigatedRef.current = true
       if (readyRef.current) {
         enqueueSave(loc.start.cfi)
       }
@@ -368,7 +375,14 @@ export default function ReaderEpub() {
       // Final save on unmount (SPA back, modal exit, route change). The seq
       // here is fresher than anything the queue's in-flight save can carry,
       // so the server's seq-gated upsert guarantees this write wins.
-      if (readyRef.current && cfiRef.current) {
+      //
+      // Gate on userMovedRef so opening an ePub and immediately
+      // exiting (before any real navigation) doesn't clobber the
+      // server's saved CFI with the cfiRef captured during the
+      // initial restore — that race overwrote a 44/300-style
+      // position with the first-page value in the CBR code path
+      // and the same pattern can hit here.
+      if (readyRef.current && cfiRef.current && hasNavigatedRef.current) {
         // api.finalSaveProgress handles the same three things
         // navigator.sendBeacon doesn't: configured baseUrl,
         // Bearer header, and offline-queue fallback.
@@ -473,7 +487,12 @@ export default function ReaderEpub() {
   // before the library refetches. Catches the case where a backward move
   // would otherwise be clobbered by a slower forward save still in flight.
   const goBack = useCallback(async () => {
-    if (cfiRef.current) {
+    // hasNavigatedRef (latches true on second relocated event) is
+    // the correct gate here — userMovedRef tracks slider-scrub
+    // state which gets reset on commit, not a "user has navigated
+    // since open" boolean. Cleanup uses the same flag, so
+    // back-button and unmount agree.
+    if (hasNavigatedRef.current && cfiRef.current) {
       try { await enqueueSave(cfiRef.current) } catch {}
     }
     navigate(-1)

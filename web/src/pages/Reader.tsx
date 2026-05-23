@@ -367,6 +367,13 @@ export default function Reader() {
   useEffect(() => {
     const send = () => {
       if (pageRef.current < 1) return
+      // Only fire the final save when the user actually navigated.
+      // Without this gate, opening a comic and exiting BEFORE the
+      // restore effect has set pageRef to the saved position causes
+      // pageRef.current=1 (initial state) to clobber whatever the
+      // server had stored. Observed in production: a 44/300 comic
+      // re-opened and quickly exited would drop to 1/300.
+      if (!userMovedRef.current) return
       // api.finalSaveProgress handles three things sendBeacon
       // doesn't: it routes the request through the configured
       // baseUrl (so the native client targets the actual server,
@@ -393,10 +400,17 @@ export default function Reader() {
   // cache up front means the Library renders the right bar even before the
   // refetch returns.
   const goBack = useCallback(async () => {
-    patchLibraryProgress(pageRef.current)
-    try {
-      await enqueueSave(pageRef.current)
-    } catch {}
+    // Only save on exit if the user actually navigated. Patching
+    // the library cache + posting a save with the initial page=1
+    // when the user just opened-and-closed the reader would
+    // overwrite their real saved position with 1. Same shape of
+    // gate as the unmount-cleanup beacon above.
+    if (userMovedRef.current) {
+      patchLibraryProgress(pageRef.current)
+      try {
+        await enqueueSave(pageRef.current)
+      } catch {}
+    }
     navigate(-1)
   }, [enqueueSave, navigate, patchLibraryProgress])
 

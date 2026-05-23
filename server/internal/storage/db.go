@@ -48,6 +48,11 @@ type User struct {
 	PasswordHash string
 	Role         string
 	CreatedAt    time.Time
+	// Preferences is an opaque JSON blob the client owns. Used today
+	// for library sort/order so they roam across browsers + native
+	// clients; future per-user settings (reader theme, last library
+	// view, etc.) extend it without further schema churn.
+	Preferences string
 }
 
 type Progress struct {
@@ -198,6 +203,10 @@ func (d *DB) migrate() error {
 	// memberships with it) is gated on the column being older than
 	// a long grace period — see scanner.Scan.
 	d.db.Exec(`ALTER TABLE comics ADD COLUMN missing_since DATETIME NULL`)
+	// Per-user preferences JSON blob — opaque to the server, the
+	// client serialises whatever shape it wants here. Today: library
+	// sort/order so they sync across browsers and native clients.
+	d.db.Exec(`ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`)
 	return nil
 }
 
@@ -223,9 +232,9 @@ func (d *DB) CreateUser(username, email, passwordHash, role string) (int64, erro
 func (d *DB) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, username, email, password_hash, role, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, email, password_hash, role, created_at, preferences FROM users WHERE username = ?`,
 		username,
-	).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.Preferences)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -235,13 +244,22 @@ func (d *DB) GetUserByUsername(username string) (*User, error) {
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	u := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, username, email, password_hash, role, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, email, password_hash, role, created_at, preferences FROM users WHERE id = ?`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.Preferences)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return u, err
+}
+
+// UpdatePreferences overwrites the preferences JSON blob for a user.
+// The body is opaque — server doesn't parse it. Called by
+// POST /api/auth/preferences when the client (Library) wants to
+// persist sort/order across sessions and devices.
+func (d *DB) UpdatePreferences(userID int64, prefs string) error {
+	_, err := d.db.Exec(`UPDATE users SET preferences = ? WHERE id = ?`, prefs, userID)
+	return err
 }
 
 func (d *DB) ListUsers() ([]*User, error) {

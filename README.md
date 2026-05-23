@@ -32,6 +32,10 @@ folder — no uploads required.
   reflow with light/sepia/dark themes and 8-step font sizing
 - **Mobile-aware**: safe-area padding on bottom bars, touch-targeted icon
   buttons, hover-and-touch parity for card actions
+- **Offline reading** (native client): download individual comics or
+  selections to local disk, read without a server connection, progress
+  queues locally and reconciles automatically when the server is
+  reachable again
 - **Auto-update**: optional systemd timer / Windows scheduled task that
   pulls + rebuilds + restarts daily
 

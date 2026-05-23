@@ -67,6 +67,9 @@ func (s *server) routes() http.Handler {
 
 			r.Get("/auth/me", s.handleMe)
 				r.Post("/auth/password", s.handleChangePassword)
+				// Opaque JSON blob owned by the client. Today: library
+				// sort/order. Roams across browsers + native clients.
+				r.Put("/auth/preferences", s.handlePutPreferences)
 
 			r.Get("/comics", s.handleListComics)
 			r.Get("/comics/{id}", s.handleGetComic)

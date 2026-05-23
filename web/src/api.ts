@@ -78,11 +78,21 @@ export interface RemoveComicResult {
   ignored?: boolean
 }
 
+export interface UserPreferences {
+  /** Sort field for the library. Mirrors LibraryUiState.sort. */
+  sort?: string
+  /** Sort direction. Mirrors LibraryUiState.order. */
+  order?: 'asc' | 'desc'
+}
+
 export interface User {
   id: number
   username: string
   email: string
   role: 'admin' | 'user'
+  /** Server-stored opaque preferences blob. Today: { sort, order }
+   *  for cross-client library-view sync. */
+  preferences?: UserPreferences
 }
 
 export interface ComicsPage {
@@ -347,6 +357,12 @@ export const api = {
   me: () => req<User>('GET', '/api/auth/me'),
   changePassword: (current: string, next: string) =>
     req<void>('POST', '/api/auth/password', { current, new: next }),
+  // Opaque-to-the-server JSON blob keyed on the calling user. Today
+  // carries library sort+order so they roam across browsers + the
+  // native client. Future settings can extend the same blob without
+  // schema churn.
+  setPreferences: (prefs: UserPreferences) =>
+    req<void>('PUT', '/api/auth/preferences', prefs),
 
   // comics
   comics: (params: Record<string, string | number>) => {

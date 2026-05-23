@@ -1,10 +1,13 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
 	"comicblaster/internal/auth"
+	"comicblaster/internal/storage"
 )
 
 func (s *server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +63,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{"id": user.ID, "username": user.Username, "role": user.Role}
+	resp := userResp(user)
 	s.attachToken(w, r, user.ID, user.Role, resp)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -115,9 +118,54 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": user.ID, "username": user.Username, "email": user.Email, "role": user.Role,
-	})
+	writeJSON(w, http.StatusOK, userResp(user))
+}
+
+// userResp builds the JSON shape the client expects for /auth/me +
+// login responses. Centralised so all the entry points include
+// preferences (otherwise the client can't hydrate sort/order from
+// the server on cold start).
+func userResp(u *storage.User) map[string]any {
+	prefs := u.Preferences
+	if prefs == "" {
+		prefs = "{}"
+	}
+	// Send as parsed JSON so the client doesn't have to JSON.parse a
+	// string field. json.RawMessage type-asserts to whatever's in
+	// the blob; defaults to {} for users without anything set.
+	return map[string]any{
+		"id":          u.ID,
+		"username":    u.Username,
+		"email":       u.Email,
+		"role":        u.Role,
+		"preferences": json.RawMessage(prefs),
+	}
+}
+
+// handlePutPreferences accepts an arbitrary JSON object and stores
+// it verbatim against the calling user. No server-side schema —
+// the client owns the shape (today: { sort, order }; tomorrow:
+// whatever it wants).
+func (s *server) handlePutPreferences(w http.ResponseWriter, r *http.Request) {
+	claims := getClaims(r)
+	// Slurp the body raw; validate that it parses as JSON so we
+	// don't store something the client can't deserialise. Cap at
+	// 16 KB to bound the row size; preferences should be tiny.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 16<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not read body")
+		return
+	}
+	var probe any
+	if err := json.Unmarshal(body, &probe); err != nil {
+		writeError(w, http.StatusBadRequest, "preferences must be valid JSON")
+		return
+	}
+	if err := s.db.UpdatePreferences(claims.UserID, string(body)); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save preferences")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // attachToken always issues a fresh JWT and sets the httpOnly cookie used

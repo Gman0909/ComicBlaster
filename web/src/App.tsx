@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { api, getApiConfig, setOfflineModeGetter, setNetworkErrorHandler, drainProgressQueue } from './api'
+import { api, getApiConfig, setOfflineModeGetter, setNetworkErrorHandler, drainProgressQueue, type User } from './api'
 import { useComic } from './hooks/useComic'
 import { useStore } from './store'
 import { isNative, bridge } from './native'
@@ -77,6 +77,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       .then((u) => {
         if (cancelled) return
         setUser(u)
+        // Server-stored preferences (sort, order, etc.) are the
+        // source of truth across clients. Hydrate the local store
+        // from them so opening the app on a new device picks up
+        // the user's choices instead of starting from defaults.
+        // Subsequent changes in the store push back via
+        // useStore.subscribe (wired below in App).
+        hydratePreferencesFromUser(u)
         // We just heard from the server — clear any prior
         // offline-mode flag so the library re-fetches live data
         // and the offline banner disappears. Also drain the
@@ -167,6 +174,45 @@ function NativeBootstrap({ children }: { children: React.ReactNode }) {
 // at module load — useStore.getState is reactive-free and safe to
 // call from a non-React context.
 setOfflineModeGetter(() => useStore.getState().offlineMode)
+
+// hydratePreferencesFromUser copies the server-stored sort/order
+// into the local store. Called from AuthGuard on every successful
+// /auth/me — fresh server values take precedence over whatever was
+// persisted locally last time. (A user switching machines wants
+// their previous device's settings, not this device's stale ones.)
+function hydratePreferencesFromUser(u: User): void {
+  const prefs = u.preferences
+  if (!prefs) return
+  const state = useStore.getState()
+  const next = { ...state.library }
+  if (prefs.sort && prefs.sort !== state.library.sort) next.sort = prefs.sort
+  if (prefs.order && prefs.order !== state.library.order) next.order = prefs.order
+  if (next.sort !== state.library.sort || next.order !== state.library.order) {
+    // Mark as hydrated FIRST so the subscribe-pushback below
+    // doesn't immediately PUT the same values back to the server.
+    hydratedFromServerRef.value = true
+    useStore.setState({ library: next })
+  } else {
+    hydratedFromServerRef.value = true
+  }
+}
+
+// Latch + debounce for pushing sort/order back to the server. The
+// store fires on every change including programmatic ones (e.g.
+// switching to last_read auto-flips order to desc); we only push
+// after hydration so the very first cold-load doesn't immediately
+// echo the default values to the server.
+const hydratedFromServerRef = { value: false }
+let pushTimer: ReturnType<typeof setTimeout> | undefined
+useStore.subscribe((state, prev) => {
+  if (!hydratedFromServerRef.value) return
+  if (!state.user) return
+  if (state.library.sort === prev.library.sort && state.library.order === prev.library.order) return
+  if (pushTimer) clearTimeout(pushTimer)
+  pushTimer = setTimeout(() => {
+    api.setPreferences({ sort: state.library.sort, order: state.library.order }).catch(() => {})
+  }, 500)
+})
 
 // Network-failure → offline-mode transition. When a connection
 // drops while the app is already open, the existing AuthGuard

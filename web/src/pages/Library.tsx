@@ -228,36 +228,48 @@ function ComicCard({ comic, onClick, onSetThumbnail, onRemove, canRemove, select
             downloading != null         → spinner + percentage
             offline=false, hover, native available → dimmed Download button
           When onToggleOffline is undefined we hide the button entirely
-          (e.g. browser deployment, or native client not yet connected to a server). */}
+          (e.g. browser deployment, or native client not yet connected to a server).
+          The wrapping <div> matches the cover's aspect ratio so the
+          button's bottom-2 sits inside the cover area, above the
+          progress bar — without nesting a <button> inside the
+          card's click-target <button>. pointer-events:none on the
+          wrapper lets cover clicks through; pointer-events:auto on
+          the button re-enables clicks on it. */}
       {onToggleOffline && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onToggleOffline() }}
-          disabled={!!downloading}
-          title={
-            downloading
-              ? `Downloading… ${formatPct(downloading)}`
-              : offline
-                ? `Remove “${comic.title}” from this device`
-                : `Download “${comic.title}” for offline reading`
-          }
-          aria-label={
-            downloading
-              ? `Downloading ${comic.title}`
-              : offline
-                ? `Remove ${comic.title} from this device`
-                : `Download ${comic.title} for offline reading`
-          }
-          className={`absolute bottom-2 left-2 z-10 p-2 rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all disabled:cursor-progress ${
-            offline || downloading
-              ? 'bg-[var(--color-accent-strong)]/90 hover:bg-[var(--color-accent-strong)] opacity-100'
-              : 'bg-black/70 hover:bg-black/85 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-90'
-          }`}
+        <div
+          className="absolute top-0 left-0 right-0 pointer-events-none"
+          style={{ aspectRatio: `1 / ${CARD_ASPECT}` }}
+          aria-hidden
         >
-          {downloading
-            ? <Loader2 size={14} className="animate-spin" aria-hidden />
-            : <HardDriveDownload size={14} aria-hidden />}
-        </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleOffline() }}
+            disabled={!!downloading}
+            title={
+              downloading
+                ? `Downloading… ${formatPct(downloading)}`
+                : offline
+                  ? `Remove “${comic.title}” from this device`
+                  : `Download “${comic.title}” for offline reading`
+            }
+            aria-label={
+              downloading
+                ? `Downloading ${comic.title}`
+                : offline
+                  ? `Remove ${comic.title} from this device`
+                  : `Download ${comic.title} for offline reading`
+            }
+            className={`absolute bottom-2 left-2 z-10 p-2 rounded-md text-white pointer-events-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all disabled:cursor-progress ${
+              offline || downloading
+                ? 'bg-[var(--color-accent-strong)]/90 hover:bg-[var(--color-accent-strong)] opacity-100'
+                : 'bg-black/70 hover:bg-black/85 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-90'
+            }`}
+          >
+            {downloading
+              ? <Loader2 size={14} className="animate-spin" aria-hidden />
+              : <HardDriveDownload size={14} aria-hidden />}
+          </button>
+        </div>
       )}
       </>)}
     </motion.div>
@@ -1007,12 +1019,17 @@ export default function Library() {
         {/* Sort — hidden in collections view. Inline controls show only on sm+;
             on mobile the same options collapse into MobileSortMenu below to
             keep the search box wide enough to be usable. */}
-        <div className={`hidden sm:flex items-center gap-0 shrink-0 ${view === 'collections' ? 'sm:hidden' : ''}`}>
+        <div className={`hidden sm:flex items-center gap-1.5 shrink-0 ${view === 'collections' ? 'sm:hidden' : ''}`}>
+          {/* Explicit h-9 on both elements + matching padding. Without
+              this the native <select>'s intrinsic height didn't quite
+              match the <button>'s, and the two sat side-by-side with
+              a visible step. Each is now independently rounded with a
+              small gap between them (was a borderless button-group). */}
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value)}
             aria-label="Sort by"
-            className="bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-l-md border-r-0 px-2 py-1.5 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] transition-colors"
+            className="h-9 bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-md px-2.5 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)] transition-colors"
           >
             {inCollection && <option value="position">Collection order</option>}
             <option value="series">Series</option>
@@ -1025,7 +1042,7 @@ export default function Library() {
             disabled={sort === 'position'}
             title={sort === 'position' ? 'Collection order is fixed' : (order === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending')}
             aria-label={`Sort ${order === 'asc' ? 'ascending' : 'descending'}`}
-            className="bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-r-md px-2 py-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-9 w-9 flex items-center justify-center bg-[var(--color-surface-overlay)] border border-[var(--color-border)] rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             {order === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
           </button>

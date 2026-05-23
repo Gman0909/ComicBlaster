@@ -202,10 +202,50 @@ setNetworkErrorHandler(() => {
 //  setOfflineMode(false) call.)
 export function resetNetworkErrorCounter(): void { consecutiveNetErrors = 0 }
 
+// OnlineProbe — while offlineMode is true, polls /api/auth/me every
+// 30 seconds. The first success flips offlineMode back to false,
+// drains the local progress queue to the server, and invalidates
+// the comic / comics queries so the UI reflects any state the user
+// changed while disconnected (or any state OTHER clients pushed
+// while we were offline — the server's seq-gated upsert keeps the
+// most-recent value of either side).
+//
+// This is what makes the offline → online transition feel
+// automatic: the user doesn't have to click Retry; as soon as the
+// network is back, progress reconciles within ≤ 30 seconds. The
+// manual Retry on the OfflineBanner does the same work
+// immediately when the user is impatient.
+function OnlineProbe() {
+  const offlineMode = useStore((s) => s.offlineMode)
+  const setOfflineMode = useStore((s) => s.setOfflineMode)
+  const setUser = useStore((s) => s.setUser)
+  useEffect(() => {
+    if (!offlineMode) return
+    const probe = async () => {
+      try {
+        const me = await api.me()
+        setUser(me)
+        setOfflineMode(false)
+        resetNetworkErrorCounter()
+        await drainProgressQueue().catch(() => 0)
+        queryClient.invalidateQueries({ queryKey: ['comics'] })
+        queryClient.invalidateQueries({ queryKey: ['comic'] })
+      } catch { /* still offline; try again on next tick */ }
+    }
+    // First probe fires after a short delay so we don't race with
+    // whatever just put us into offline mode; subsequent every 30s.
+    const first = setTimeout(probe, 5_000)
+    const interval = setInterval(probe, 30_000)
+    return () => { clearTimeout(first); clearInterval(interval) }
+  }, [offlineMode, setOfflineMode, setUser])
+  return null
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeSync />
+      <OnlineProbe />
       <NativeBootstrap>
         <BrowserRouter>
           <Routes>

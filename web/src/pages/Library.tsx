@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'framer-motion'
 import { Search, ScanLine, LogOut, Sun, Moon, Settings, Image, ArrowUp, ArrowDown, ArrowUpDown, Bookmark, Trash2, CheckSquare, LayoutGrid, Library as LibraryIcon, Check, Eye, EyeOff, User as UserIcon, Maximize, Minimize, HardDriveDownload, Loader2 } from 'lucide-react'
-import { api, resolveServerMediaUrl, type Comic, type Collection, type ComicsPage, type User } from '../api'
+import { api, drainProgressQueue, resolveServerMediaUrl, type Comic, type Collection, type ComicsPage, type User } from '../api'
 import { useStore } from '../store'
 import { useScan } from '../hooks/useScan'
 import { useFullscreen } from '../hooks/useFullscreen'
@@ -1120,7 +1120,14 @@ export default function Library() {
               const me = await api.me()
               setUser(me)
               setOfflineMode(false)
+              // Push any progress the user accumulated while
+              // disconnected up to the server, then refetch
+              // comics so the library bars reflect both the
+              // drained values and any newer values another
+              // client may have produced while we were offline.
+              await drainProgressQueue().catch(() => 0)
               queryClient.invalidateQueries({ queryKey: ['comics'] })
+              queryClient.invalidateQueries({ queryKey: ['comic'] })
             } catch { /* still offline; banner stays */ }
           }}
         />

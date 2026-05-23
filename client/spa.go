@@ -73,7 +73,13 @@ func spaHandler(root fs.FS, off *offline.Manager) http.Handler {
 					http.Error(w, "bad page number", http.StatusBadRequest)
 					return
 				}
-				off.ServePage(w, r, id, n)
+				// Server's /api/comics/{id}/pages/{n} treats n as
+				// 1-indexed (Page(n-1) on the reader). React calls
+				// both endpoints with the same n, so the offline
+				// passthrough has to use the same convention or the
+				// native client would skip the cover (page 1 → array
+				// index 1 = second image). Subtract 1 here to match.
+				off.ServePage(w, r, id, n-1)
 				return
 			}
 			http.Error(w, "bad offline path", http.StatusBadRequest)

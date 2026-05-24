@@ -18,6 +18,12 @@ type Config struct {
 
 type ServerConfig struct {
 	HTTPPort int    `yaml:"http_port"`
+	// HTTPHost binds the listener to a specific interface address.
+	// Empty (the default) binds 0.0.0.0 — listen on every interface.
+	// Set this when something else on the box already holds the same
+	// port on another interface (e.g. Tailscale Serve terminating TLS
+	// on the Tailscale IP) so the two don't collide.
+	HTTPHost string `yaml:"http_host,omitempty"`
 	WebRoot  string `yaml:"web_root"`
 	// AdvertiseMDNS controls whether the server publishes itself on the
 	// local network via mDNS / Bonjour as _comicblaster._tcp. Native

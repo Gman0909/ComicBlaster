@@ -133,7 +133,7 @@ func main() {
 
 	api.SetVersion(Version)
 	srv := api.NewServer(cfg, db, sc)
-	addr := fmt.Sprintf(":%d", cfg.Server.HTTPPort)
+	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTPHost, cfg.Server.HTTPPort)
 	httpSrv := &http.Server{Addr: addr, Handler: srv}
 
 	// Publish on the LAN via mDNS so native clients can auto-discover the
@@ -149,7 +149,11 @@ func main() {
 	defer mdns.Stop()
 
 	go func() {
-		log.Printf("ComicBlaster listening on http://0.0.0.0%s", addr)
+		displayHost := cfg.Server.HTTPHost
+		if displayHost == "" {
+			displayHost = "0.0.0.0"
+		}
+		log.Printf("ComicBlaster listening on http://%s:%d", displayHost, cfg.Server.HTTPPort)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}

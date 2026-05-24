@@ -177,6 +177,21 @@ func pickHost(entry *zeroconf.ServiceEntry) string {
 // each one. Best-effort: if the binary isn't on PATH (likely on
 // non-Tailscale machines) we silently return so the other layers can
 // still produce results.
+//
+// Two URL variants are probed per peer:
+//
+//   - https://<MagicDNS-name>:<port>  — covers peers that run
+//     `tailscale serve` (TLS-terminated). This is the URL the user
+//     should pick if they want the connection to keep working when
+//     they leave the LAN, because MagicDNS resolves from anywhere on
+//     the tailnet, and the cert is Let's Encrypt-signed.
+//   - http://<TailscaleIP>:<port>     — covers plain HTTP on the
+//     tailnet (no Serve / Funnel in front). Fallback for setups that
+//     don't terminate TLS.
+//
+// Both are emitted on success so the picker can show whichever the
+// peer actually responds to. They have distinct URLs so the dedupe in
+// Browse() leaves both visible.
 func browseTailscale(ctx context.Context, out chan<- ServerInfo) {
 	cmd := exec.CommandContext(ctx, "tailscale", "status", "--json")
 	output, err := cmd.Output()
@@ -186,6 +201,7 @@ func browseTailscale(ctx context.Context, out chan<- ServerInfo) {
 	var status struct {
 		Peer map[string]struct {
 			HostName     string   `json:"HostName"`
+			DNSName      string   `json:"DNSName"`
 			TailscaleIPs []string `json:"TailscaleIPs"`
 			Online       bool     `json:"Online"`
 		} `json:"Peer"`
@@ -198,32 +214,36 @@ func browseTailscale(ctx context.Context, out chan<- ServerInfo) {
 	const defaultPort = 8082
 	var probes sync.WaitGroup
 	defer probes.Wait()
+	probe := func(u, host string) {
+		defer probes.Done()
+		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		defer cancel()
+		info, err := Probe(pctx, u)
+		if err != nil {
+			return
+		}
+		info.Source = "tailscale"
+		// Tailscale's hostname is more useful than the /api/discover
+		// name when both are present — matches what `tailscale
+		// status` shows in the picker.
+		if host != "" {
+			info.Name = host
+		}
+		select {
+		case out <- *info:
+		case <-ctx.Done():
+		}
+	}
 	for _, p := range status.Peer {
 		if !p.Online || len(p.TailscaleIPs) == 0 {
 			continue
 		}
+		if dns := strings.TrimSuffix(p.DNSName, "."); dns != "" {
+			probes.Add(1)
+			go probe(fmt.Sprintf("https://%s:%d", dns, defaultPort), p.HostName)
+		}
 		ip := p.TailscaleIPs[0]
-		url := fmt.Sprintf("http://%s:%d", ip, defaultPort)
 		probes.Add(1)
-		go func(u, host string) {
-			defer probes.Done()
-			pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-			defer cancel()
-			info, err := Probe(pctx, u)
-			if err != nil {
-				return
-			}
-			info.Source = "tailscale"
-			// Tailscale's hostname is more useful than the
-			// /api/discover name when both are present — it matches
-			// what `tailscale status` shows.
-			if host != "" {
-				info.Name = host
-			}
-			select {
-			case out <- *info:
-			case <-ctx.Done():
-			}
-		}(url, p.HostName)
+		go probe(fmt.Sprintf("http://%s:%d", ip, defaultPort), p.HostName)
 	}
 }

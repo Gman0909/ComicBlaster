@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { api, configureApi } from '../api'
 import { useStore } from '../store'
+import { isNative, bridge, setCurrentToken } from '../native'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -86,6 +87,22 @@ export default function Login() {
           >
             {loading ? 'Please wait…' : mode === 'setup' ? 'Create account' : 'Sign in'}
           </button>
+
+          {isNative() && (
+            <button
+              type="button"
+              onClick={async () => {
+                const br = bridge()
+                if (br) await br.ClearConnection()
+                setCurrentToken(null)
+                configureApi({ baseUrl: '', auth: 'cookie', getToken: () => null, onToken: () => {} })
+                window.dispatchEvent(new CustomEvent('cb-disconnect'))
+              }}
+              className="w-full text-center text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline-offset-2 hover:underline transition-colors"
+            >
+              Use a different server
+            </button>
+          )}
         </form>
       </div>
     </div>
